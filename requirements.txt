@@ -1,0 +1,7 @@
+opencv-python
+mediapipe
+deepface
+flask
+fastapi
+uvicorn
+sqlalchemy
