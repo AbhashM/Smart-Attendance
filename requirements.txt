@@ -1,7 +1,4 @@
 opencv-python
-mediapipe
-deepface
+mediapipe==0.10.14
 flask
-fastapi
-uvicorn
-sqlalchemy
+

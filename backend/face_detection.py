@@ -23,6 +23,5 @@ with mp_face.FaceDetection(min_detection_confidence=0.5) as face_detection:
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
 cap.release()
 cv2.destroyAllWindows()
