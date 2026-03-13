@@ -27,3 +27,6 @@ tests/     - testing scripts
 5. Run face detection:
    python backend/face_detection.py
 
+## Current Status
+- Sprint 1: Camera and face detection setup complete
+- Sprint 2: Frontend connected to backend for face detection
