@@ -6,7 +6,7 @@ mp_draw = mp.solutions.drawing_utils
 
 cap = cv2.VideoCapture(0)
 
-with mp_face.FaceDetection(min_detection_confidence=0.5) as face_detection:
+with mp_face.FaceDetection(min_detection_confidence=0.8) as face_detection:
     while True:
         ret, frame = cap.read()
         if not ret:
