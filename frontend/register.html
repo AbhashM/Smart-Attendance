@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Register Student</title>
+</head>
+<body>
+    <h2>Register Student</h2>
+
+    <form id="registerForm">
+        <input type="text" id="studentName" placeholder="Student Name" required />
+        <br><br>
+        <input type="text" id="studentId" placeholder="Student ID" required />
+        <br><br>
+        <input type="file" id="studentImage" required />
+        <br><br>
+        <button type="submit">Register</button>
+    </form>
+
+    <p id="result"></p>
+
+    <script>
+        const form = document.getElementById("registerForm");
+        const resultText = document.getElementById("result");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData();
+            formData.append("student_name", document.getElementById("studentName").value);
+            formData.append("student_id", document.getElementById("studentId").value);
+            formData.append("image", document.getElementById("studentImage").files[0]);
+
+            try {
+                const response = await fetch("http://127.0.0.1:5000/register", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    resultText.innerText = "Student registered successfully ✅";
+                } else {
+                    resultText.innerText = "Error: " + data.error;
+                }
+            } catch (error) {
+                resultText.innerText = "Request failed.";
+                console.log(error);
+            }
+        });
+    </script>
+</body>
+</html>
