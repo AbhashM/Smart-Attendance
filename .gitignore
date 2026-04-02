@@ -9,5 +9,5 @@ __pycache__/
 *.log
 
 database/attendance.db
-backend/uploads/
+backend/uploads/*
 !backend/uploads/.gitkeep
