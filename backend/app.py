@@ -1,3 +1,4 @@
+from deepface import DeepFace
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cv2
@@ -5,6 +6,7 @@ import mediapipe as mp
 import numpy as np
 import os
 import sqlite3
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
@@ -71,6 +73,60 @@ def register_student():
         return jsonify({"success": True})
     except sqlite3.IntegrityError:
         return jsonify({"success": False, "error": "Student ID already exists"}), 400
+
+@app.route("/recognize", methods=["POST"])
+def recognize_student():
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "No image uploaded"}), 400
+
+    image = request.files["image"]
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    test_image_path = temp_file.name
+    temp_file.close()
+
+    image.save(test_image_path)
+
+    conn = create_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT student_name, student_id, image_path FROM students")
+    students = cursor.fetchall()
+    conn.close()
+
+    if not students:
+        os.remove(test_image_path)
+        return jsonify({"success": False, "error": "No students registered"}), 400
+
+    for student in students:
+        student_name, student_id, image_path = student
+
+        if not os.path.exists(image_path):
+            print("Missing registered image:", image_path)
+            continue
+
+        try:
+            result = DeepFace.verify(
+                img1_path=test_image_path,
+                img2_path=image_path,
+                enforce_detection=False
+            )
+
+            if result["verified"]:
+                os.remove(test_image_path)
+                return jsonify({
+                    "success": True,
+                    "student_name": student_name,
+                    "student_id": student_id
+                })
+
+        except Exception as e:
+            print("Error comparing face:", e)
+
+    os.remove(test_image_path)
+    return jsonify({
+        "success": False,
+        "error": "No matching student found"
+    })
 
 if __name__ == "__main__":
     app.run(debug=True)

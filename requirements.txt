@@ -2,3 +2,5 @@ opencv-python
 mediapipe==0.10.14
 flask
 flask-cors
+deepface
+tf-keras
