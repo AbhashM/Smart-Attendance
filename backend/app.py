@@ -18,8 +18,7 @@ mp_face = mp.solutions.face_detection
 face_detection = mp_face.FaceDetection(min_detection_confidence=0.5)
 
 def create_connection():
-    conn = sqlite3.connect("database/attendance.db")
-    return conn
+    return sqlite3.connect("database/attendance.db")
 
 @app.route("/")
 def home():
@@ -40,10 +39,7 @@ def detect_face():
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     results = face_detection.process(rgb)
 
-    if results.detections:
-        return jsonify({"face_detected": True})
-    else:
-        return jsonify({"face_detected": False})
+    return jsonify({"face_detected": bool(results.detections)})
 
 @app.route("/register", methods=["POST"])
 def register_student():
@@ -112,11 +108,24 @@ def recognize_student():
             )
 
             if result["verified"]:
+                attendance_conn = create_connection()
+                attendance_cursor = attendance_conn.cursor()
+
+                attendance_cursor.execute("""
+                    INSERT INTO attendance (student_id, student_name)
+                    VALUES (?, ?)
+                """, (student_id, student_name))
+
+                attendance_conn.commit()
+                attendance_conn.close()
+
                 os.remove(test_image_path)
+
                 return jsonify({
                     "success": True,
                     "student_name": student_name,
-                    "student_id": student_id
+                    "student_id": student_id,
+                    "attendance_marked": True
                 })
 
         except Exception as e:
