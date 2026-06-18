@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Attendance Dashboard</title>
+</head>
+<body>
+    <h2>Smart Attendance Dashboard</h2>
+
+    <label>Select Date:</label>
+    <input type="date" id="dashboardDate">
+
+    <button onclick="loadDashboard()">Load Dashboard</button>
+
+    <br><br>
+
+    <div>
+        <h3>Total Students</h3>
+        <p id="totalStudents">0</p>
+    </div>
+
+    <div>
+        <h3>Attendance on Selected Date</h3>
+        <p id="selectedDateAttendance">0</p>
+    </div>
+
+    <div>
+        <h3>Total Attendance Records</h3>
+        <p id="totalRecords">0</p>
+    </div>
+
+    <div>
+        <h3>Latest Attendance on Selected Date</h3>
+        <p id="latestAttendance">None</p>
+    </div>
+
+    <script>
+        function setTodayDate() {
+            const today = new Date().toISOString().split("T")[0];
+            document.getElementById("dashboardDate").value = today;
+        }
+
+        async function loadDashboard() {
+            const selectedDate = document.getElementById("dashboardDate").value;
+
+            let url = "http://127.0.0.1:5000/dashboard-stats";
+
+            if (selectedDate) {
+                url += "?date=" + selectedDate;
+            }
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!data.success) {
+                    alert("Failed to load dashboard stats");
+                    return;
+                }
+
+                document.getElementById("totalStudents").innerText = data.total_students;
+                document.getElementById("selectedDateAttendance").innerText = data.selected_date_attendance;
+                document.getElementById("totalRecords").innerText = data.total_attendance_records;
+
+                if (data.latest_attendance) {
+                    document.getElementById("latestAttendance").innerText =
+                        data.latest_attendance.student_name +
+                        " (" + data.latest_attendance.student_id + ") - " +
+                        data.latest_attendance.timestamp;
+                } else {
+                    document.getElementById("latestAttendance").innerText =
+                        "No attendance found for " + data.selected_date;
+                }
+
+            } catch (error) {
+                console.log(error);
+                alert("Request failed");
+            }
+        }
+
+        window.onload = function () {
+            setTodayDate();
+            loadDashboard();
+        };
+    </script>
+</body>
+</html>

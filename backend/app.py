@@ -181,6 +181,56 @@ def get_attendance():
         "success": True,
         "attendance": attendance_records
     })
+@app.route("/dashboard-stats", methods=["GET"])
+def dashboard_stats():
+    selected_date = request.args.get("date")
+
+    if not selected_date:
+        selected_date = datetime.now().strftime("%Y-%m-%d")
+
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM students")
+    total_students = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM attendance")
+    total_attendance_records = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM attendance
+        WHERE DATE(timestamp) = ?
+    """, (selected_date,))
+    selected_date_attendance = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT student_name, student_id, timestamp
+        FROM attendance
+        WHERE DATE(timestamp) = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, (selected_date,))
+    latest = cursor.fetchone()
+
+    conn.close()
+
+    latest_attendance = None
+
+    if latest:
+        latest_attendance = {
+            "student_name": latest[0],
+            "student_id": latest[1],
+            "timestamp": latest[2]
+        }
+
+    return jsonify({
+        "success": True,
+        "selected_date": selected_date,
+        "total_students": total_students,
+        "total_attendance_records": total_attendance_records,
+        "selected_date_attendance": selected_date_attendance,
+        "latest_attendance": latest_attendance
+    })
 
 if __name__ == "__main__":
     app.run(debug=True)
