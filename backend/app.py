@@ -1,6 +1,7 @@
 from deepface import DeepFace
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from datetime import datetime
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -67,6 +68,7 @@ def register_student():
         conn.close()
 
         return jsonify({"success": True})
+
     except sqlite3.IntegrityError:
         return jsonify({"success": False, "error": "Student ID already exists"}), 400
 
@@ -108,13 +110,15 @@ def recognize_student():
             )
 
             if result["verified"]:
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
                 attendance_conn = create_connection()
                 attendance_cursor = attendance_conn.cursor()
 
                 attendance_cursor.execute("""
-                    INSERT INTO attendance (student_id, student_name)
-                    VALUES (?, ?)
-                """, (student_id, student_name))
+                    INSERT INTO attendance (student_id, student_name, timestamp)
+                    VALUES (?, ?, ?)
+                """, (student_id, student_name, current_time))
 
                 attendance_conn.commit()
                 attendance_conn.close()
@@ -125,16 +129,57 @@ def recognize_student():
                     "success": True,
                     "student_name": student_name,
                     "student_id": student_id,
-                    "attendance_marked": True
+                    "attendance_marked": True,
+                    "timestamp": current_time
                 })
 
         except Exception as e:
             print("Error comparing face:", e)
 
     os.remove(test_image_path)
+
     return jsonify({
         "success": False,
         "error": "No matching student found"
+    })
+
+@app.route("/attendance", methods=["GET"])
+def get_attendance():
+    selected_date = request.args.get("date")
+
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    if selected_date:
+        cursor.execute("""
+            SELECT id, student_id, student_name, timestamp
+            FROM attendance
+            WHERE DATE(timestamp) = ?
+            ORDER BY timestamp DESC
+        """, (selected_date,))
+    else:
+        cursor.execute("""
+            SELECT id, student_id, student_name, timestamp
+            FROM attendance
+            ORDER BY timestamp DESC
+        """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    attendance_records = []
+
+    for row in rows:
+        attendance_records.append({
+            "id": row[0],
+            "student_id": row[1],
+            "student_name": row[2],
+            "timestamp": row[3]
+        })
+
+    return jsonify({
+        "success": True,
+        "attendance": attendance_records
     })
 
 if __name__ == "__main__":

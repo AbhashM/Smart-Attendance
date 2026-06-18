@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Attendance History</title>
+</head>
+<body>
+    <h2>Attendance History</h2>
+
+    <label>Select Date:</label>
+    <input type="date" id="attendanceDate">
+
+    <button onclick="loadAttendance()">Load Attendance</button>
+
+    <br><br>
+
+    <h3 id="count">Total Records: 0</h3>
+
+    <table border="1" cellpadding="8">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Student ID</th>
+                <th>Student Name</th>
+                <th>Timestamp</th>
+            </tr>
+        </thead>
+        <tbody id="attendanceTable"></tbody>
+    </table>
+
+    <script>
+        async function loadAttendance() {
+            const table = document.getElementById("attendanceTable");
+            const count = document.getElementById("count");
+            const selectedDate = document.getElementById("attendanceDate").value;
+
+            table.innerHTML = "";
+            count.innerText = "Total Records: 0";
+
+            let url = "http://127.0.0.1:5000/attendance";
+
+            if (selectedDate) {
+                url += "?date=" + selectedDate;
+            }
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!data.success) {
+                    table.innerHTML = "<tr><td colspan='4'>Failed to load attendance</td></tr>";
+                    return;
+                }
+
+                count.innerText = "Total Records: " + data.attendance.length;
+
+                if (data.attendance.length === 0) {
+                    table.innerHTML = "<tr><td colspan='4'>No attendance records found for this date</td></tr>";
+                    return;
+                }
+
+                data.attendance.forEach(record => {
+                    const row = document.createElement("tr");
+
+                    row.innerHTML = `
+                        <td>${record.id}</td>
+                        <td>${record.student_id}</td>
+                        <td>${record.student_name}</td>
+                        <td>${record.timestamp}</td>
+                    `;
+
+                    table.appendChild(row);
+                });
+
+            } catch (error) {
+                console.log(error);
+                table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+            }
+        }
+
+        window.onload = loadAttendance;
+    </script>
+</body>
+</html>
