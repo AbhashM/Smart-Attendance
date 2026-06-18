@@ -1,57 +1,43 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Smart Attendance</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h2>Face Detection Test</h2>
 
-    <form id="uploadForm">
-        <input type="file" id="imageInput" required />
-        <button type="submit">Detect Face</button>
-    </form>
+    <div class="navbar">
+        <h1>Smart Attendance</h1>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="register.html">Register</a>
+            <a href="recognize.html">Recognize</a>
+            <a href="attendance.html">Attendance</a>
+            <a href="dashboard.html">Dashboard</a>
+        </div>
+    </div>
 
-    <p id="result"></p>
+    <div class="container">
+        <div class="card">
+            <h2>AI-Powered Attendance System</h2>
+            <p>
+                Smart Attendance uses face recognition to register students,
+                identify them, mark attendance, and display attendance statistics.
+            </p>
+        </div>
 
-   <script>
-    const form = document.getElementById("uploadForm");
-    const resultText = document.getElementById("result");
+        <div class="card">
+            <h3>Current Features</h3>
+            <ul>
+                <li>Student registration</li>
+                <li>Face recognition</li>
+                <li>Attendance logging</li>
+                <li>Date-based attendance history</li>
+                <li>Dashboard statistics</li>
+            </ul>
+        </div>
+    </div>
 
-    form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-
-        try {
-            const fileInput = document.getElementById("imageInput");
-
-            if (!fileInput.files.length) {
-                resultText.innerText = "Please choose an image first.";
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append("image", fileInput.files[0]);
-
-            const response = await fetch("http://127.0.0.1:5000/detect", {
-                method: "POST",
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.face_detected) {
-                resultText.innerText = "Face Detected ✅";
-            } else if (data.face_detected === false) {
-                resultText.innerText = "No Face Detected ❌";
-            } else if (data.error) {
-                resultText.innerText = "Error: " + data.error;
-            } else {
-                resultText.innerText = "Unexpected response from server.";
-            }
-        } catch (error) {
-            resultText.innerText = "Request failed. Check backend/CORS.";
-            console.log(error);
-        }
-    });
-</script>
 </body>
 </html>

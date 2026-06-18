@@ -1,53 +1,71 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Register Student</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h2>Register Student</h2>
 
-    <form id="registerForm">
-        <input type="text" id="studentName" placeholder="Student Name" required />
-        <br><br>
-        <input type="text" id="studentId" placeholder="Student ID" required />
-        <br><br>
-        <input type="file" id="studentImage" required />
-        <br><br>
-        <button type="submit">Register</button>
-    </form>
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+    </div>
+</div>
 
-    <p id="result"></p>
+<div class="container">
+    <div class="card">
+        <h2>Register Student</h2>
 
-    <script>
-        const form = document.getElementById("registerForm");
-        const resultText = document.getElementById("result");
+        <form id="registerForm">
+            <input type="text" id="studentName" placeholder="Student Name" required>
+            <br>
+            <input type="text" id="studentId" placeholder="Student ID" required>
+            <br>
+            <input type="file" id="studentImage" required>
+            <br><br>
+            <button type="submit">Register Student</button>
+        </form>
 
-        form.addEventListener("submit", async (e) => {
-            e.preventDefault();
+        <p id="result"></p>
+    </div>
+</div>
 
-            const formData = new FormData();
-            formData.append("student_name", document.getElementById("studentName").value);
-            formData.append("student_id", document.getElementById("studentId").value);
-            formData.append("image", document.getElementById("studentImage").files[0]);
+<script>
+    const form = document.getElementById("registerForm");
+    const resultText = document.getElementById("result");
 
-            try {
-                const response = await fetch("http://127.0.0.1:5000/register", {
-                    method: "POST",
-                    body: formData
-                });
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
 
-                const data = await response.json();
+        const formData = new FormData();
+        formData.append("student_name", document.getElementById("studentName").value);
+        formData.append("student_id", document.getElementById("studentId").value);
+        formData.append("image", document.getElementById("studentImage").files[0]);
 
-                if (data.success) {
-                    resultText.innerText = "Student registered successfully ✅";
-                } else {
-                    resultText.innerText = "Error: " + data.error;
-                }
-            } catch (error) {
-                resultText.innerText = "Request failed.";
-                console.log(error);
+        try {
+            const response = await fetch("http://127.0.0.1:5000/register", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                resultText.innerText = "Student registered successfully.";
+            } else {
+                resultText.innerText = "Error: " + data.error;
             }
-        });
-    </script>
+        } catch (error) {
+            resultText.innerText = "Request failed.";
+        }
+    });
+</script>
+
 </body>
 </html>

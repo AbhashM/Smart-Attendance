@@ -3,20 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <title>Attendance History</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h2>Attendance History</h2>
 
-    <label>Select Date:</label>
-    <input type="date" id="attendanceDate">
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+    </div>
+</div>
 
-    <button onclick="loadAttendance()">Load Attendance</button>
+<div class="container">
+    <div class="card">
+        <h2>Attendance History</h2>
 
-    <br><br>
+        <label>Select Date:</label>
+        <input type="date" id="attendanceDate">
+        <button onclick="loadAttendance()">Load Attendance</button>
 
-    <h3 id="count">Total Records: 0</h3>
+        <h3 id="count">Total Records: 0</h3>
+    </div>
 
-    <table border="1" cellpadding="8">
+    <table>
         <thead>
             <tr>
                 <th>ID</th>
@@ -27,58 +40,54 @@
         </thead>
         <tbody id="attendanceTable"></tbody>
     </table>
+</div>
 
-    <script>
-        async function loadAttendance() {
-            const table = document.getElementById("attendanceTable");
-            const count = document.getElementById("count");
-            const selectedDate = document.getElementById("attendanceDate").value;
+<script>
+    async function loadAttendance() {
+        const table = document.getElementById("attendanceTable");
+        const count = document.getElementById("count");
+        const selectedDate = document.getElementById("attendanceDate").value;
 
-            table.innerHTML = "";
-            count.innerText = "Total Records: 0";
+        table.innerHTML = "";
+        count.innerText = "Total Records: 0";
 
-            let url = "http://127.0.0.1:5000/attendance";
+        let url = "http://127.0.0.1:5000/attendance";
 
-            if (selectedDate) {
-                url += "?date=" + selectedDate;
-            }
-
-            try {
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (!data.success) {
-                    table.innerHTML = "<tr><td colspan='4'>Failed to load attendance</td></tr>";
-                    return;
-                }
-
-                count.innerText = "Total Records: " + data.attendance.length;
-
-                if (data.attendance.length === 0) {
-                    table.innerHTML = "<tr><td colspan='4'>No attendance records found for this date</td></tr>";
-                    return;
-                }
-
-                data.attendance.forEach(record => {
-                    const row = document.createElement("tr");
-
-                    row.innerHTML = `
-                        <td>${record.id}</td>
-                        <td>${record.student_id}</td>
-                        <td>${record.student_name}</td>
-                        <td>${record.timestamp}</td>
-                    `;
-
-                    table.appendChild(row);
-                });
-
-            } catch (error) {
-                console.log(error);
-                table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
-            }
+        if (selectedDate) {
+            url += "?date=" + selectedDate;
         }
 
-        window.onload = loadAttendance;
-    </script>
+        try {
+            const response = await fetch(url);
+            const data = await response.json();
+
+            count.innerText = "Total Records: " + data.attendance.length;
+
+            if (data.attendance.length === 0) {
+                table.innerHTML = "<tr><td colspan='4'>No attendance records found</td></tr>";
+                return;
+            }
+
+            data.attendance.forEach(record => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+                    <td>${record.id}</td>
+                    <td>${record.student_id}</td>
+                    <td>${record.student_name}</td>
+                    <td>${record.timestamp}</td>
+                `;
+
+                table.appendChild(row);
+            });
+
+        } catch (error) {
+            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+        }
+    }
+
+    window.onload = loadAttendance;
+</script>
+
 </body>
 </html>
