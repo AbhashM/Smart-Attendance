@@ -51,7 +51,7 @@ def register_student():
     if not student_name or not student_id or not image:
         return jsonify({"success": False, "error": "Missing required fields"}), 400
 
-    filename = f"{student_id}_{image.filename}"
+    filename = f"{student_id}_Default_{image.filename}"
     image_path = os.path.join(UPLOAD_FOLDER, filename)
     image.save(image_path)
 
@@ -64,6 +64,11 @@ def register_student():
             VALUES (?, ?, ?)
         """, (student_name, student_id, image_path))
 
+        cursor.execute("""
+            INSERT INTO student_images (student_id, image_path, appearance_label)
+            VALUES (?, ?, ?)
+        """, (student_id, image_path, "Default"))
+
         conn.commit()
         conn.close()
 
@@ -71,6 +76,40 @@ def register_student():
 
     except sqlite3.IntegrityError:
         return jsonify({"success": False, "error": "Student ID already exists"}), 400
+
+@app.route("/add-appearance", methods=["POST"])
+def add_appearance():
+    student_id = request.form.get("student_id")
+    appearance_label = request.form.get("appearance_label") or "Alternate"
+    image = request.files.get("image")
+
+    if not student_id or not image:
+        return jsonify({"success": False, "error": "Missing student ID or image"}), 400
+
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM students WHERE student_id = ?", (student_id,))
+    student = cursor.fetchone()
+
+    if not student:
+        conn.close()
+        return jsonify({"success": False, "error": "Student not found"}), 404
+
+    safe_label = appearance_label.replace(" ", "_")
+    filename = f"{student_id}_{safe_label}_{image.filename}"
+    image_path = os.path.join(UPLOAD_FOLDER, filename)
+    image.save(image_path)
+
+    cursor.execute("""
+        INSERT INTO student_images (student_id, image_path, appearance_label)
+        VALUES (?, ?, ?)
+    """, (student_id, image_path, appearance_label))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"success": True})
 
 @app.route("/recognize", methods=["POST"])
 def recognize_student():
@@ -87,13 +126,20 @@ def recognize_student():
 
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT student_name, student_id, image_path FROM students")
+
+    cursor.execute("""
+        SELECT students.student_name, students.student_id, student_images.image_path
+        FROM students
+        JOIN student_images
+        ON students.student_id = student_images.student_id
+    """)
+
     students = cursor.fetchall()
     conn.close()
 
     if not students:
         os.remove(test_image_path)
-        return jsonify({"success": False, "error": "No students registered"}), 400
+        return jsonify({"success": False, "error": "No student appearance profiles found"}), 400
 
     for student in students:
         student_name, student_id, image_path = student
@@ -181,6 +227,7 @@ def get_attendance():
         "success": True,
         "attendance": attendance_records
     })
+
 @app.route("/dashboard-stats", methods=["GET"])
 def dashboard_stats():
     selected_date = request.args.get("date")

@@ -12,6 +12,7 @@
     <div class="nav-links">
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
+        <a href="appearances.html">Appearances</a>
         <a href="recognize.html">Recognize</a>
         <a href="attendance.html">Attendance</a>
         <a href="dashboard.html">Dashboard</a>
@@ -27,15 +28,16 @@
         <button onclick="loadAttendance()">Load Attendance</button>
 
         <h3 id="count">Total Records: 0</h3>
+        <p id="message">Please select a date to view attendance records.</p>
     </div>
 
     <table>
         <thead>
             <tr>
-                <th>ID</th>
+                <th>#</th>
                 <th>Student ID</th>
                 <th>Student Name</th>
-                <th>Timestamp</th>
+                <th>Check-in Time</th>
             </tr>
         </thead>
         <tbody id="attendanceTable"></tbody>
@@ -43,50 +45,68 @@
 </div>
 
 <script>
+    function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    }
+
     async function loadAttendance() {
         const table = document.getElementById("attendanceTable");
         const count = document.getElementById("count");
+        const message = document.getElementById("message");
         const selectedDate = document.getElementById("attendanceDate").value;
 
         table.innerHTML = "";
         count.innerText = "Total Records: 0";
 
-        let url = "http://127.0.0.1:5000/attendance";
-
-        if (selectedDate) {
-            url += "?date=" + selectedDate;
+        if (!selectedDate) {
+            message.innerText = "Please select a date to view attendance records.";
+            return;
         }
+
+        message.innerText = "Loading attendance records...";
+
+        const url = "http://127.0.0.1:5000/attendance?date=" + selectedDate;
 
         try {
             const response = await fetch(url);
             const data = await response.json();
 
-            count.innerText = "Total Records: " + data.attendance.length;
-
-            if (data.attendance.length === 0) {
-                table.innerHTML = "<tr><td colspan='4'>No attendance records found</td></tr>";
+            if (!data.success) {
+                message.innerText = "Failed to load attendance records.";
                 return;
             }
 
-            data.attendance.forEach(record => {
+            count.innerText = "Total Records: " + data.attendance.length;
+
+            if (data.attendance.length === 0) {
+                message.innerText = "No attendance records found for this date.";
+                return;
+            }
+
+            message.innerText = "Showing attendance for " + selectedDate;
+
+            data.attendance.forEach((record, index) => {
                 const row = document.createElement("tr");
 
                 row.innerHTML = `
-                    <td>${record.id}</td>
+                    <td>${index + 1}</td>
                     <td>${record.student_id}</td>
                     <td>${record.student_name}</td>
-                    <td>${record.timestamp}</td>
+                    <td>${formatTime(record.timestamp)}</td>
                 `;
 
                 table.appendChild(row);
             });
 
         } catch (error) {
-            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+            console.log(error);
+            message.innerText = "Request failed.";
         }
     }
-
-    window.onload = loadAttendance;
 </script>
 
 </body>

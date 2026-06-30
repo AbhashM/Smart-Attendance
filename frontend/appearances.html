@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Appearance Profiles</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="appearances.html">Appearances</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="card">
+        <h2>Add Appearance Profile</h2>
+        <p>Upload alternate appearances such as glasses, mask, haircut, makeup, or other major changes.</p>
+
+        <input type="text" id="studentId" placeholder="Student ID">
+        <br>
+
+        <input type="text" id="appearanceLabel" placeholder="Appearance Label (ex: Glasses, Mask)">
+        <br>
+
+        <input type="file" id="appearanceImage">
+        <br><br>
+
+        <button onclick="addAppearance()">Save Appearance</button>
+
+        <p id="result"></p>
+    </div>
+</div>
+
+<script>
+    async function addAppearance() {
+        const studentId = document.getElementById("studentId").value;
+        const appearanceLabel = document.getElementById("appearanceLabel").value;
+        const image = document.getElementById("appearanceImage").files[0];
+        const result = document.getElementById("result");
+
+        if (!studentId || !image) {
+            result.innerText = "Please enter student ID and choose an image.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("student_id", studentId);
+        formData.append("appearance_label", appearanceLabel || "Alternate");
+        formData.append("image", image);
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/add-appearance", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                result.innerText = "Appearance profile added successfully.";
+            } else {
+                result.innerText = "Error: " + data.error;
+            }
+        } catch (error) {
+            result.innerText = "Request failed.";
+        }
+    }
+</script>
+
+</body>
+</html>
