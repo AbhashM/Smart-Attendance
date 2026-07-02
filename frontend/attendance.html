@@ -13,6 +13,7 @@
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
         <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
         <a href="recognize.html">Recognize</a>
         <a href="attendance.html">Attendance</a>
         <a href="dashboard.html">Dashboard</a>
@@ -23,12 +24,18 @@
     <div class="card">
         <h2>Attendance History</h2>
 
+        <label>Select Class:</label>
+        <select id="classSelect"></select>
+
+        <br><br>
+
         <label>Select Date:</label>
         <input type="date" id="attendanceDate">
+
         <button onclick="loadAttendance()">Load Attendance</button>
 
         <h3 id="count">Total Records: 0</h3>
-        <p id="message">Please select a date to view attendance records.</p>
+        <p id="message">Please select a class and date to view attendance records.</p>
     </div>
 
     <table>
@@ -38,6 +45,7 @@
                 <th>Student ID</th>
                 <th>Student Name</th>
                 <th>Check-in Time</th>
+                <th>Status</th>
             </tr>
         </thead>
         <tbody id="attendanceTable"></tbody>
@@ -53,23 +61,49 @@
         });
     }
 
+    async function loadClasses() {
+        const select = document.getElementById("classSelect");
+        select.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes");
+            const data = await response.json();
+
+            if (data.classes.length === 0) {
+                select.innerHTML = "<option>No classes found</option>";
+                return;
+            }
+
+            data.classes.forEach(cls => {
+                const option = document.createElement("option");
+                option.value = cls.id;
+                option.textContent = cls.course_code + " - " + cls.course_name;
+                select.appendChild(option);
+            });
+
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
     async function loadAttendance() {
         const table = document.getElementById("attendanceTable");
         const count = document.getElementById("count");
         const message = document.getElementById("message");
         const selectedDate = document.getElementById("attendanceDate").value;
+        const classId = document.getElementById("classSelect").value;
 
         table.innerHTML = "";
         count.innerText = "Total Records: 0";
 
-        if (!selectedDate) {
-            message.innerText = "Please select a date to view attendance records.";
+        if (!selectedDate || !classId || classId === "No classes found") {
+            message.innerText = "Please select a class and date to view attendance records.";
             return;
         }
 
         message.innerText = "Loading attendance records...";
 
-        const url = "http://127.0.0.1:5000/attendance?date=" + selectedDate;
+        const url = "http://127.0.0.1:5000/attendance?date=" + selectedDate + "&class_id=" + classId;
 
         try {
             const response = await fetch(url);
@@ -83,11 +117,11 @@
             count.innerText = "Total Records: " + data.attendance.length;
 
             if (data.attendance.length === 0) {
-                message.innerText = "No attendance records found for this date.";
+                message.innerText = "No attendance records found for this class and date.";
                 return;
             }
 
-            message.innerText = "Showing attendance for " + selectedDate;
+            message.innerText = "Showing attendance for selected class on " + selectedDate;
 
             data.attendance.forEach((record, index) => {
                 const row = document.createElement("tr");
@@ -97,6 +131,7 @@
                     <td>${record.student_id}</td>
                     <td>${record.student_name}</td>
                     <td>${formatTime(record.timestamp)}</td>
+                    <td>${record.status}</td>
                 `;
 
                 table.appendChild(row);
@@ -107,6 +142,8 @@
             message.innerText = "Request failed.";
         }
     }
+
+    window.onload = loadClasses;
 </script>
 
 </body>

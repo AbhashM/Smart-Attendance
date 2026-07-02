@@ -111,10 +111,172 @@ def add_appearance():
 
     return jsonify({"success": True})
 
+@app.route("/students", methods=["GET"])
+def get_students():
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT student_id, student_name
+        FROM students
+        ORDER BY student_name ASC
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    students = []
+
+    for row in rows:
+        students.append({
+            "student_id": row[0],
+            "student_name": row[1]
+        })
+
+    return jsonify({
+        "success": True,
+        "students": students
+    })
+
+@app.route("/classes", methods=["POST"])
+def create_class():
+    course_name = request.form.get("course_name")
+    course_code = request.form.get("course_code")
+    professor_name = request.form.get("professor_name")
+
+    if not course_name or not course_code or not professor_name:
+        return jsonify({"success": False, "error": "Missing required fields"}), 400
+
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO classes (course_name, course_code, professor_name)
+        VALUES (?, ?, ?)
+    """, (course_name, course_code, professor_name))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"success": True})
+
+@app.route("/classes", methods=["GET"])
+def get_classes():
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, course_name, course_code, professor_name
+        FROM classes
+        ORDER BY id DESC
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    classes = []
+
+    for row in rows:
+        classes.append({
+            "id": row[0],
+            "course_name": row[1],
+            "course_code": row[2],
+            "professor_name": row[3]
+        })
+
+    return jsonify({
+        "success": True,
+        "classes": classes
+    })
+
+@app.route("/class-students", methods=["POST"])
+def add_student_to_class():
+    class_id = request.form.get("class_id")
+    student_id = request.form.get("student_id")
+
+    if not class_id or not student_id:
+        return jsonify({"success": False, "error": "Missing class ID or student ID"}), 400
+
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM classes WHERE id = ?", (class_id,))
+    class_record = cursor.fetchone()
+
+    if not class_record:
+        conn.close()
+        return jsonify({"success": False, "error": "Class not found"}), 404
+
+    cursor.execute("SELECT * FROM students WHERE student_id = ?", (student_id,))
+    student_record = cursor.fetchone()
+
+    if not student_record:
+        conn.close()
+        return jsonify({"success": False, "error": "Student not found"}), 404
+
+    cursor.execute("""
+        INSERT INTO class_students (class_id, student_id)
+        VALUES (?, ?)
+    """, (class_id, student_id))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"success": True})
+
+@app.route("/class-students/<int:class_id>", methods=["GET"])
+def get_class_students(class_id):
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT students.student_id, students.student_name
+        FROM class_students
+        JOIN students
+        ON class_students.student_id = students.student_id
+        WHERE class_students.class_id = ?
+    """, (class_id,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    students = []
+
+    for row in rows:
+        students.append({
+            "student_id": row[0],
+            "student_name": row[1]
+        })
+
+    return jsonify({
+        "success": True,
+        "students": students
+    })
+
+@app.route("/class-students/<int:class_id>/<student_id>", methods=["DELETE"])
+def remove_student_from_class(class_id, student_id):
+    conn = create_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM class_students
+        WHERE class_id = ? AND student_id = ?
+    """, (class_id, student_id))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"success": True})
+
 @app.route("/recognize", methods=["POST"])
 def recognize_student():
     if "image" not in request.files:
         return jsonify({"success": False, "error": "No image uploaded"}), 400
+
+    class_id = request.form.get("class_id")
+
+    if not class_id:
+        return jsonify({"success": False, "error": "Please select a class"}), 400
 
     image = request.files["image"]
 
@@ -132,14 +294,20 @@ def recognize_student():
         FROM students
         JOIN student_images
         ON students.student_id = student_images.student_id
-    """)
+        JOIN class_students
+        ON students.student_id = class_students.student_id
+        WHERE class_students.class_id = ?
+    """, (class_id,))
 
     students = cursor.fetchall()
     conn.close()
 
     if not students:
         os.remove(test_image_path)
-        return jsonify({"success": False, "error": "No student appearance profiles found"}), 400
+        return jsonify({
+            "success": False,
+            "error": "No student appearance profiles found for this class"
+        }), 400
 
     for student in students:
         student_name, student_id, image_path = student
@@ -162,9 +330,9 @@ def recognize_student():
                 attendance_cursor = attendance_conn.cursor()
 
                 attendance_cursor.execute("""
-                    INSERT INTO attendance (student_id, student_name, timestamp)
-                    VALUES (?, ?, ?)
-                """, (student_id, student_name, current_time))
+                    INSERT INTO attendance (class_id, student_id, student_name, timestamp, status)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (class_id, student_id, student_name, current_time, "Present"))
 
                 attendance_conn.commit()
                 attendance_conn.close()
@@ -175,7 +343,9 @@ def recognize_student():
                     "success": True,
                     "student_name": student_name,
                     "student_id": student_id,
+                    "class_id": class_id,
                     "attendance_marked": True,
+                    "status": "Present",
                     "timestamp": current_time
                 })
 
@@ -186,29 +356,39 @@ def recognize_student():
 
     return jsonify({
         "success": False,
-        "error": "No matching student found"
+        "error": "No matching student found in selected class"
     })
 
 @app.route("/attendance", methods=["GET"])
 def get_attendance():
     selected_date = request.args.get("date")
+    class_id = request.args.get("class_id")
+
+    if not selected_date or not class_id:
+        return jsonify({
+            "success": True,
+            "attendance": [],
+            "message": "Please select a class and date"
+        })
 
     conn = create_connection()
     cursor = conn.cursor()
 
-    if selected_date:
-        cursor.execute("""
-            SELECT id, student_id, student_name, timestamp
-            FROM attendance
-            WHERE DATE(timestamp) = ?
-            ORDER BY timestamp DESC
-        """, (selected_date,))
-    else:
-        cursor.execute("""
-            SELECT id, student_id, student_name, timestamp
-            FROM attendance
-            ORDER BY timestamp DESC
-        """)
+    cursor.execute("""
+        SELECT attendance.id,
+               attendance.student_id,
+               attendance.student_name,
+               attendance.timestamp,
+               attendance.status,
+               classes.course_code,
+               classes.course_name
+        FROM attendance
+        LEFT JOIN classes
+        ON attendance.class_id = classes.id
+        WHERE DATE(attendance.timestamp) = ?
+        AND attendance.class_id = ?
+        ORDER BY attendance.timestamp DESC
+    """, (selected_date, class_id))
 
     rows = cursor.fetchall()
     conn.close()
@@ -220,7 +400,10 @@ def get_attendance():
             "id": row[0],
             "student_id": row[1],
             "student_name": row[2],
-            "timestamp": row[3]
+            "timestamp": row[3],
+            "status": row[4],
+            "course_code": row[5],
+            "course_name": row[6]
         })
 
     return jsonify({

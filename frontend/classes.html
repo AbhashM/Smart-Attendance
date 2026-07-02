@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Class Management</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+
+    <div class="card">
+        <h2>Create Class</h2>
+
+        <input type="text" id="courseName" placeholder="Course Name">
+        <br>
+        <input type="text" id="courseCode" placeholder="Course Code">
+        <br>
+        <input type="text" id="professorName" placeholder="Professor Name">
+        <br><br>
+
+        <button onclick="createClass()">Create Class</button>
+
+        <p id="createResult"></p>
+    </div>
+
+    <div class="card">
+        <h2>Add Student to Class</h2>
+
+        <label>Select Class:</label>
+        <br>
+        <select id="classSelect"></select>
+
+        <br><br>
+
+        <label>Select Student:</label>
+        <br>
+        <select id="studentSelect"></select>
+
+        <br><br>
+
+        <button onclick="addStudentToClass()">Add Student</button>
+
+        <p id="addResult"></p>
+    </div>
+
+    <div class="card">
+        <h2>Class Roster</h2>
+
+        <label>Select Class:</label>
+        <br>
+        <select id="rosterClassSelect" onchange="loadRoster()"></select>
+
+        <h3 id="rosterCount">Total Students: 0</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Student ID</th>
+                    <th>Student Name</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="rosterTable"></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Classes</h2>
+        <button onclick="loadClasses()">Refresh Classes</button>
+        <br><br>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Class ID</th>
+                    <th>Course Code</th>
+                    <th>Course Name</th>
+                    <th>Professor</th>
+                </tr>
+            </thead>
+            <tbody id="classesTable"></tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+    let allClasses = [];
+    let allStudents = [];
+
+    async function createClass() {
+        const formData = new FormData();
+        formData.append("course_name", document.getElementById("courseName").value);
+        formData.append("course_code", document.getElementById("courseCode").value);
+        formData.append("professor_name", document.getElementById("professorName").value);
+
+        const result = document.getElementById("createResult");
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                result.innerText = "Class created successfully.";
+                await loadClasses();
+                populateClassDropdowns();
+            } else {
+                result.innerText = "Error: " + data.error;
+            }
+        } catch (error) {
+            result.innerText = "Request failed.";
+        }
+    }
+
+    async function loadClasses() {
+        const table = document.getElementById("classesTable");
+        table.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes");
+            const data = await response.json();
+
+            allClasses = data.classes;
+
+            if (data.classes.length === 0) {
+                table.innerHTML = "<tr><td colspan='4'>No classes found</td></tr>";
+                return;
+            }
+
+            data.classes.forEach(cls => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+                    <td>${cls.id}</td>
+                    <td>${cls.course_code}</td>
+                    <td>${cls.course_name}</td>
+                    <td>${cls.professor_name}</td>
+                `;
+
+                table.appendChild(row);
+            });
+
+            populateClassDropdowns();
+
+        } catch (error) {
+            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+        }
+    }
+
+    async function loadStudents() {
+        try {
+            const response = await fetch("http://127.0.0.1:5000/students");
+            const data = await response.json();
+
+            allStudents = data.students;
+
+            const studentSelect = document.getElementById("studentSelect");
+            studentSelect.innerHTML = "";
+
+            if (allStudents.length === 0) {
+                studentSelect.innerHTML = "<option>No students found</option>";
+                return;
+            }
+
+            allStudents.forEach(student => {
+                const option = document.createElement("option");
+                option.value = student.student_id;
+                option.textContent = `${student.student_name} (${student.student_id})`;
+                studentSelect.appendChild(option);
+            });
+
+        } catch (error) {
+            console.log(error);
+        }
+    }
+
+    function populateClassDropdowns() {
+        const classSelect = document.getElementById("classSelect");
+        const rosterClassSelect = document.getElementById("rosterClassSelect");
+
+        classSelect.innerHTML = "";
+        rosterClassSelect.innerHTML = "";
+
+        if (allClasses.length === 0) {
+            classSelect.innerHTML = "<option>No classes found</option>";
+            rosterClassSelect.innerHTML = "<option>No classes found</option>";
+            return;
+        }
+
+        allClasses.forEach(cls => {
+            const label = `${cls.course_code} - ${cls.course_name}`;
+
+            const option1 = document.createElement("option");
+            option1.value = cls.id;
+            option1.textContent = label;
+            classSelect.appendChild(option1);
+
+            const option2 = document.createElement("option");
+            option2.value = cls.id;
+            option2.textContent = label;
+            rosterClassSelect.appendChild(option2);
+        });
+
+        loadRoster();
+    }
+
+    async function addStudentToClass() {
+        const classId = document.getElementById("classSelect").value;
+        const studentId = document.getElementById("studentSelect").value;
+        const result = document.getElementById("addResult");
+
+        const formData = new FormData();
+        formData.append("class_id", classId);
+        formData.append("student_id", studentId);
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/class-students", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                result.innerText = "Student added to class.";
+                loadRoster();
+            } else {
+                result.innerText = "Error: " + data.error;
+            }
+        } catch (error) {
+            result.innerText = "Request failed.";
+        }
+    }
+
+    async function loadRoster() {
+        const classId = document.getElementById("rosterClassSelect").value;
+        const table = document.getElementById("rosterTable");
+        const count = document.getElementById("rosterCount");
+
+        table.innerHTML = "";
+        count.innerText = "Total Students: 0";
+
+        if (!classId || classId === "No classes found") {
+            return;
+        }
+
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/class-students/${classId}`);
+            const data = await response.json();
+
+            count.innerText = "Total Students: " + data.students.length;
+
+            if (data.students.length === 0) {
+                table.innerHTML = "<tr><td colspan='4'>No students enrolled in this class</td></tr>";
+                return;
+            }
+
+            data.students.forEach((student, index) => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td>${student.student_id}</td>
+                    <td>${student.student_name}</td>
+                    <td>
+                        <button onclick="removeStudentFromClass('${classId}', '${student.student_id}')">
+                            Remove
+                        </button>
+                    </td>
+                `;
+
+                table.appendChild(row);
+            });
+
+        } catch (error) {
+            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+        }
+    }
+
+    async function removeStudentFromClass(classId, studentId) {
+        try {
+            const response = await fetch(`http://127.0.0.1:5000/class-students/${classId}/${studentId}`, {
+                method: "DELETE"
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                loadRoster();
+            } else {
+                alert("Error removing student.");
+            }
+
+        } catch (error) {
+            alert("Request failed.");
+        }
+    }
+
+    window.onload = async function () {
+        await loadClasses();
+        await loadStudents();
+        populateClassDropdowns();
+    };
+</script>
+
+</body>
+</html>

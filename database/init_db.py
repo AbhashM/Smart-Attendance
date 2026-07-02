@@ -49,9 +49,12 @@ CREATE TABLE IF NOT EXISTS class_students (
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER,
     student_id TEXT NOT NULL,
     student_name TEXT NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'Present',
+    FOREIGN KEY (class_id) REFERENCES classes(id)
 )
 """)
 

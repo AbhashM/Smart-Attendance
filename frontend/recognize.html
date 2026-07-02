@@ -13,6 +13,7 @@
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
         <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
         <a href="recognize.html">Recognize</a>
         <a href="attendance.html">Attendance</a>
         <a href="dashboard.html">Dashboard</a>
@@ -23,8 +24,16 @@
     <div class="card">
         <h2>Recognize Student</h2>
 
-        <input type="file" id="testImage">
+        <label>Select Class:</label>
+        <br>
+        <select id="classSelect"></select>
+
         <br><br>
+
+        <input type="file" id="testImage">
+
+        <br><br>
+
         <button id="recognizeBtn" type="button">Recognize & Mark Attendance</button>
 
         <p id="result">Waiting for input...</p>
@@ -32,9 +41,41 @@
 </div>
 
 <script>
+    async function loadClasses() {
+        const select = document.getElementById("classSelect");
+        select.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes");
+            const data = await response.json();
+
+            if (!data.classes || data.classes.length === 0) {
+                select.innerHTML = "<option>No classes found</option>";
+                return;
+            }
+
+            data.classes.forEach(cls => {
+                const option = document.createElement("option");
+                option.value = cls.id;
+                option.textContent = cls.course_code + " - " + cls.course_name;
+                select.appendChild(option);
+            });
+
+        } catch (error) {
+            console.log(error);
+            select.innerHTML = "<option>Failed to load classes</option>";
+        }
+    }
+
     document.getElementById("recognizeBtn").addEventListener("click", async function () {
+        const classId = document.getElementById("classSelect").value;
         const fileInput = document.getElementById("testImage");
         const resultText = document.getElementById("result");
+
+        if (!classId || classId === "No classes found" || classId === "Failed to load classes") {
+            resultText.textContent = "Please select a valid class.";
+            return;
+        }
 
         if (!fileInput.files.length) {
             resultText.textContent = "Please choose an image first.";
@@ -44,6 +85,7 @@
         resultText.textContent = "Recognizing student...";
 
         const formData = new FormData();
+        formData.append("class_id", classId);
         formData.append("image", fileInput.files[0]);
 
         try {
@@ -56,15 +98,22 @@
 
             if (data.success) {
                 resultText.textContent =
-                    "Attendance marked for " + data.student_name + " (" + data.student_id + ")";
+                    "Attendance marked for " +
+                    data.student_name +
+                    " (" + data.student_id + ") " +
+                    "as " + data.status +
+                    " at " + data.timestamp;
             } else {
                 resultText.textContent = "Error: " + data.error;
             }
 
         } catch (error) {
+            console.log(error);
             resultText.textContent = "Request failed.";
         }
     });
+
+    window.onload = loadClasses;
 </script>
 
 </body>
