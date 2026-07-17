@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Attendance Policies</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="policies.html">Policies</a>
+        <a href="excuses.html">Excuses</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-title">
+        <span class="badge">Professor Tool</span>
+        <h2>Attendance Policies</h2>
+        <p>Create, edit, and manage custom attendance policies for each course.</p>
+    </div>
+
+    <div class="card">
+        <h2 id="formTitle">Create Policy</h2>
+
+        <input type="hidden" id="editingPolicyId">
+
+        <div class="form-grid">
+            <div class="form-group full-width">
+                <label>Select Class</label>
+                <select id="classSelect"></select>
+            </div>
+
+            <div class="form-group">
+                <label>Policy Name</label>
+                <input type="text" id="policyName" placeholder="Attendance Failure Policy">
+            </div>
+
+            <div class="form-group">
+                <label>Attendance Weight (%)</label>
+                <input type="number" id="attendanceWeight" placeholder="10">
+            </div>
+
+            <div class="form-group">
+                <label>Maximum Absences</label>
+                <input type="number" id="absenceLimit" placeholder="5">
+            </div>
+
+            <div class="form-group">
+                <label>Maximum Late Arrivals</label>
+                <input type="number" id="lateLimit" placeholder="3">
+            </div>
+
+            <div class="form-group">
+                <label>Late Threshold (minutes)</label>
+                <input type="number" id="lateMinutes" placeholder="10">
+            </div>
+
+            <div class="form-group">
+                <label>Do Excused Absences Count?</label>
+                <select id="excuseCounts">
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                </select>
+            </div>
+
+            <div class="form-group full-width">
+                <label>Consequence</label>
+                <input type="text" id="consequence" placeholder="Attendance Grade = F">
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button onclick="savePolicy()" id="saveButton">Save Policy</button>
+            <button onclick="cancelEdit()" class="secondary-btn" type="button">Cancel</button>
+        </div>
+
+        <p id="result"></p>
+    </div>
+
+    <div class="card">
+        <h2>Saved Policies</h2>
+        <p>Select a class above to view its policies.</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Policy</th>
+                    <th>Absence Limit</th>
+                    <th>Late Limit</th>
+                    <th>Weight</th>
+                    <th>Consequence</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="policiesTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let currentPolicies = [];
+
+    async function loadClasses() {
+        const select = document.getElementById("classSelect");
+        select.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes");
+            const data = await response.json();
+
+            if (!data.classes || data.classes.length === 0) {
+                select.innerHTML = "<option>No classes found</option>";
+                return;
+            }
+
+            data.classes.forEach(cls => {
+                const option = document.createElement("option");
+                option.value = cls.id;
+                option.textContent = cls.course_code + " - " + cls.course_name;
+                select.appendChild(option);
+            });
+
+            loadPolicies();
+
+        } catch (error) {
+            console.log(error);
+            select.innerHTML = "<option>Failed to load classes</option>";
+        }
+    }
+
+    async function savePolicy() {
+        const editingPolicyId = document.getElementById("editingPolicyId").value;
+        const classId = document.getElementById("classSelect").value;
+        const result = document.getElementById("result");
+
+        const payload = {
+            class_id: classId,
+            policy_name: document.getElementById("policyName").value,
+            attendance_weight: document.getElementById("attendanceWeight").value,
+            absence_limit: document.getElementById("absenceLimit").value,
+            late_limit: document.getElementById("lateLimit").value,
+            late_minutes: document.getElementById("lateMinutes").value,
+            excuse_counts: document.getElementById("excuseCounts").value,
+            consequence: document.getElementById("consequence").value
+        };
+
+        try {
+            let response;
+
+            if (editingPolicyId) {
+                response = await fetch("http://127.0.0.1:5000/attendance-policies/" + editingPolicyId, {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                const formData = new FormData();
+                Object.keys(payload).forEach(key => {
+                    formData.append(key, payload[key]);
+                });
+
+                response = await fetch("http://127.0.0.1:5000/attendance-policies", {
+                    method: "POST",
+                    body: formData
+                });
+            }
+
+            const data = await response.json();
+
+            if (data.success) {
+                result.innerText = editingPolicyId ? "Policy updated successfully." : "Policy saved successfully.";
+                clearForm();
+                loadPolicies();
+            } else {
+                result.innerText = "Error: " + data.error;
+            }
+        } catch (error) {
+            result.innerText = "Request failed.";
+        }
+    }
+
+    async function loadPolicies() {
+        const classId = document.getElementById("classSelect").value;
+        const table = document.getElementById("policiesTable");
+
+        table.innerHTML = "";
+        currentPolicies = [];
+
+        if (!classId || classId === "No classes found") {
+            table.innerHTML = "<tr><td colspan='7'>Please select a valid class</td></tr>";
+            return;
+        }
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/attendance-policies/" + classId);
+            const data = await response.json();
+
+            currentPolicies = data.policies || [];
+
+            if (currentPolicies.length === 0) {
+                table.innerHTML = "<tr><td colspan='7'>No policies found for this class</td></tr>";
+                return;
+            }
+
+            currentPolicies.forEach((policy, index) => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td>${policy.policy_name}</td>
+                    <td>${policy.absence_limit || "N/A"}</td>
+                    <td>${policy.late_limit || "N/A"}</td>
+                    <td>${policy.attendance_weight || "N/A"}%</td>
+                    <td>${policy.consequence || "N/A"}</td>
+                    <td>
+                        <div class="action-buttons">
+                            <button onclick="editPolicy(${policy.id})">Edit</button>
+                            <button class="danger-btn" onclick="deletePolicy(${policy.id})">Delete</button>
+                        </div>
+                    </td>
+                `;
+
+                table.appendChild(row);
+            });
+
+        } catch (error) {
+            table.innerHTML = "<tr><td colspan='7'>Request failed</td></tr>";
+        }
+    }
+
+    function editPolicy(policyId) {
+        const policy = currentPolicies.find(p => p.id === policyId);
+
+        if (!policy) {
+            return;
+        }
+
+        document.getElementById("editingPolicyId").value = policy.id;
+        document.getElementById("policyName").value = policy.policy_name || "";
+        document.getElementById("attendanceWeight").value = policy.attendance_weight || "";
+        document.getElementById("absenceLimit").value = policy.absence_limit || "";
+        document.getElementById("lateLimit").value = policy.late_limit || "";
+        document.getElementById("lateMinutes").value = policy.late_minutes || "";
+        document.getElementById("excuseCounts").value = policy.excuse_counts || "No";
+        document.getElementById("consequence").value = policy.consequence || "";
+
+        document.getElementById("formTitle").innerText = "Edit Policy";
+        document.getElementById("saveButton").innerText = "Update Policy";
+        document.getElementById("result").innerText = "Editing selected policy.";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function deletePolicy(policyId) {
+        const confirmed = confirm("Are you sure you want to delete this policy?");
+
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/attendance-policies/" + policyId, {
+                method: "DELETE"
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                loadPolicies();
+                clearForm();
+            } else {
+                alert("Error deleting policy.");
+            }
+
+        } catch (error) {
+            alert("Request failed.");
+        }
+    }
+
+    function clearForm() {
+        document.getElementById("editingPolicyId").value = "";
+        document.getElementById("policyName").value = "";
+        document.getElementById("attendanceWeight").value = "";
+        document.getElementById("absenceLimit").value = "";
+        document.getElementById("lateLimit").value = "";
+        document.getElementById("lateMinutes").value = "";
+        document.getElementById("excuseCounts").value = "No";
+        document.getElementById("consequence").value = "";
+
+        document.getElementById("formTitle").innerText = "Create Policy";
+        document.getElementById("saveButton").innerText = "Save Policy";
+    }
+
+    function cancelEdit() {
+        clearForm();
+        document.getElementById("result").innerText = "Edit cancelled.";
+    }
+
+    document.getElementById("classSelect").addEventListener("change", function () {
+        clearForm();
+        loadPolicies();
+    });
+
+    window.onload = loadClasses;
+</script>
+
+</body>
+</html>

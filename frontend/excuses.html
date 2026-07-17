@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Excuse Requests</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="navbar">
+    <h1>Smart Attendance</h1>
+    <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="register.html">Register</a>
+        <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
+        <a href="recognize.html">Recognize</a>
+        <a href="attendance.html">Attendance</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="policies.html">Policies</a>
+        <a href="excuses.html">Excuses</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-title">
+        <span class="badge">Student & Professor Tool</span>
+        <h2>Excuse Requests</h2>
+        <p>Students can submit absence excuses, and professors can approve or reject them.</p>
+    </div>
+
+    <div class="card">
+        <h2>Submit Excuse</h2>
+
+        <div class="form-grid">
+            <div class="form-group">
+                <label>Student ID</label>
+                <input type="text" id="studentId" placeholder="Enter student ID">
+            </div>
+
+            <div class="form-group">
+                <label>Select Class</label>
+                <select id="classSelect"></select>
+            </div>
+
+            <div class="form-group">
+                <label>Excuse Date</label>
+                <input type="date" id="excuseDate">
+            </div>
+
+            <div class="form-group full-width">
+                <label>Reason</label>
+                <input type="text" id="reason" placeholder="Example: Doctor appointment, illness, family emergency">
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button onclick="submitExcuse()">Submit Excuse</button>
+        </div>
+
+        <p id="submitResult"></p>
+    </div>
+
+    <div class="card">
+        <h2>Excuse Requests</h2>
+
+        <button onclick="loadExcuses()">Refresh Requests</button>
+
+        <br><br>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Student</th>
+                    <th>Class</th>
+                    <th>Date</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="excusesTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function loadClasses() {
+        const select = document.getElementById("classSelect");
+        select.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/classes");
+            const data = await response.json();
+
+            if (!data.classes || data.classes.length === 0) {
+                select.innerHTML = "<option>No classes found</option>";
+                return;
+            }
+
+            data.classes.forEach(cls => {
+                const option = document.createElement("option");
+                option.value = cls.id;
+                option.textContent = cls.course_code + " - " + cls.course_name;
+                select.appendChild(option);
+            });
+
+        } catch (error) {
+            console.log(error);
+            select.innerHTML = "<option>Failed to load classes</option>";
+        }
+    }
+
+    async function submitExcuse() {
+        const studentId = document.getElementById("studentId").value;
+        const classId = document.getElementById("classSelect").value;
+        const excuseDate = document.getElementById("excuseDate").value;
+        const reason = document.getElementById("reason").value;
+        const result = document.getElementById("submitResult");
+
+        if (!studentId || !classId || !excuseDate || !reason) {
+            result.innerText = "Please fill out all fields.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("student_id", studentId);
+        formData.append("class_id", classId);
+        formData.append("excuse_date", excuseDate);
+        formData.append("reason", reason);
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/excuses", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                result.innerText = "Excuse submitted successfully.";
+                document.getElementById("reason").value = "";
+                loadExcuses();
+            } else {
+                result.innerText = "Error: " + data.error;
+            }
+
+        } catch (error) {
+            result.innerText = "Request failed.";
+        }
+    }
+
+    async function loadExcuses() {
+        const table = document.getElementById("excusesTable");
+        table.innerHTML = "";
+
+        try {
+            const response = await fetch("http://127.0.0.1:5000/excuses");
+            const data = await response.json();
+
+            if (!data.excuses || data.excuses.length === 0) {
+                table.innerHTML = "<tr><td colspan='8'>No excuse requests found.</td></tr>";
+                return;
+            }
+
+            data.excuses.forEach((excuse, index) => {
+                const row = document.createElement("tr");
+
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td>${excuse.student_name} (${excuse.student_id})</td>
+                    <td>${excuse.course_code} - ${excuse.course_name}</td>
+                    <td>${excuse.excuse_date}</td>
+                    <td>${excuse.reason}</td>
+                    <td>${excuse.status}</td>
+                    <td>${excuse.submitted_at}</td>
+                    <td>
+    ${
+        excuse.status === "Pending"
+        ? `
+            <div class="action-buttons">
+                <button onclick="updateExcuse(${excuse.id}, 'Approved')">Approve</button>
+                <button class="danger-btn" onclick="updateExcuse(${excuse.id}, 'Rejected')">Reject</button>
+            </div>
+          `
+        : `<span class="badge">${excuse.status}</span>`
+    }
+</td>
+                `;
+
+                table.appendChild(row);
+            });
+
+        } catch (error) {
+            table.innerHTML = "<tr><td colspan='8'>Request failed.</td></tr>";
+        }
+    }
+
+    async function updateExcuse(excuseId, status) {
+        try {
+            const response = await fetch("http://127.0.0.1:5000/excuses/" + excuseId, {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ status: status })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                loadExcuses();
+            } else {
+                alert("Error updating excuse.");
+            }
+
+        } catch (error) {
+            alert("Request failed.");
+        }
+    }
+
+    window.onload = async function () {
+        await loadClasses();
+        loadExcuses();
+    };
+</script>
+
+</body>
+</html>

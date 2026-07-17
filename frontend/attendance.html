@@ -17,6 +17,8 @@
         <a href="recognize.html">Recognize</a>
         <a href="attendance.html">Attendance</a>
         <a href="dashboard.html">Dashboard</a>
+        <a href="policies.html">Policies</a>
+        <a href="excuses.html">Excuses</a>
     </div>
 </div>
 
@@ -33,6 +35,7 @@
         <input type="date" id="attendanceDate">
 
         <button onclick="loadAttendance()">Load Attendance</button>
+        <button onclick="exportAttendance()">Export to Excel</button>
 
         <h3 id="count">Total Records: 0</h3>
         <p id="message">Please select a class and date to view attendance records.</p>
@@ -141,6 +144,24 @@
             console.log(error);
             message.innerText = "Request failed.";
         }
+    }
+
+    function exportAttendance() {
+        const selectedDate = document.getElementById("attendanceDate").value;
+        const classId = document.getElementById("classSelect").value;
+
+        if (!selectedDate || !classId || classId === "No classes found") {
+            alert("Please select a class and date before exporting.");
+            return;
+        }
+
+        const url =
+            "http://127.0.0.1:5000/export-attendance?date=" +
+            selectedDate +
+            "&class_id=" +
+            classId;
+
+        window.location.href = url;
     }
 
     window.onload = loadClasses;

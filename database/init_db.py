@@ -58,6 +58,34 @@ CREATE TABLE IF NOT EXISTS attendance (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS attendance_policies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL,
+    policy_name TEXT NOT NULL,
+    absence_limit INTEGER,
+    late_limit INTEGER,
+    late_minutes INTEGER,
+    attendance_weight INTEGER,
+    consequence TEXT,
+    excuse_counts TEXT DEFAULT 'No',
+    FOREIGN KEY (class_id) REFERENCES classes(id)
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS excuses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id TEXT NOT NULL,
+    class_id INTEGER NOT NULL,
+    excuse_date TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT DEFAULT 'Pending',
+    submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (student_id) REFERENCES students(student_id),
+    FOREIGN KEY (class_id) REFERENCES classes(id)
+)
+""")
+
 conn.commit()
 conn.close()
 

@@ -4,3 +4,5 @@ flask
 flask-cors
 deepface
 tf-keras
+gunicorn
+psycopg2-binary

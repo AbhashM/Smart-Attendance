@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Smart Attendance Dashboard</title>
+    <title>Professor Dashboard</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,43 +13,123 @@
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
         <a href="appearances.html">Appearances</a>
+        <a href="classes.html">Classes</a>
         <a href="recognize.html">Recognize</a>
         <a href="attendance.html">Attendance</a>
         <a href="dashboard.html">Dashboard</a>
-        <a href="classes.html">Classes</a>
+        <a href="policies.html">Policies</a>
+        <a href="excuses.html">Excuses</a>
     </div>
 </div>
 
 <div class="container">
-    <div class="card">
+
+    <div class="page-title">
+        <span class="badge">Professor View</span>
         <h2>Dashboard</h2>
+        <p>Monitor class attendance, policy risk, check-ins, and student activity.</p>
+    </div>
+
+    <div class="card">
+        <h3>Filters</h3>
+
+        <label>Select Class:</label>
+        <select id="dashboardClass"></select>
+
+        <br><br>
 
         <label>Select Date:</label>
         <input type="date" id="dashboardDate">
-        <button onclick="loadDashboard()">Load Dashboard</button>
+
+        <br><br>
+
+        <button onclick="loadDashboard()">Refresh Dashboard</button>
     </div>
 
     <div class="stat-grid">
         <div class="stat-card">
-            <h3>Total Students</h3>
+            <h3>Students Enrolled</h3>
             <p id="totalStudents">0</p>
         </div>
 
-        <div class="stat-card">
-            <h3>Attendance on Date</h3>
-            <p id="selectedDateAttendance">0</p>
+        <div class="stat-card success-card">
+            <h3>Present on Date</h3>
+            <p id="presentCount">0</p>
+        </div>
+
+        <div class="stat-card warning-card">
+            <h3>Absent on Date</h3>
+            <p id="absentCount">0</p>
         </div>
 
         <div class="stat-card">
-            <h3>Total Records</h3>
-            <p id="totalRecords">0</p>
-        </div>
-
-        <div class="stat-card">
-            <h3>Latest Attendance</h3>
-            <p id="latestAttendance">None</p>
+            <h3>Attendance Rate</h3>
+            <p id="attendanceRate">0%</p>
         </div>
     </div>
+
+    <div class="card">
+        <h2>Attendance Distribution</h2>
+        <p>Present vs absent students for the selected class and date.</p>
+
+        <div class="bar-chart">
+            <div class="bar-row">
+                <span>Present</span>
+                <div class="bar-bg">
+                    <div id="presentBar" class="bar-fill success-fill" style="width: 0%;"></div>
+                </div>
+                <strong id="presentPercent">0%</strong>
+            </div>
+    <div class="card">
+    <h2>Attendance Trend</h2>
+    <p>Attendance rate across recent class sessions.</p>
+
+    <div id="trendChart" class="trend-chart"></div>
+</div>
+
+            <div class="bar-row">
+                <span>Absent</span>
+                <div class="bar-bg">
+                    <div id="absentBar" class="bar-fill warning-fill" style="width: 0%;"></div>
+                </div>
+                <strong id="absentPercent">0%</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-layout">
+        <div class="card">
+            <h2>Recent Attendance</h2>
+            <p id="recentMessage">Select a class and date to view records.</p>
+
+            <br>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Student</th>
+                        <th>Student ID</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="recentAttendanceTable"></tbody>
+            </table>
+        </div>
+
+        <div class="card warning-card">
+            <h2>Students Requiring Attention</h2>
+            <p id="riskMessage">Select a class to evaluate attendance policy.</p>
+
+            <br>
+
+            <ul id="riskList">
+                <li>No policy data loaded yet.</li>
+            </ul>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -58,40 +138,225 @@
         document.getElementById("dashboardDate").value = today;
     }
 
-    async function loadDashboard() {
-        const selectedDate = document.getElementById("dashboardDate").value;
+    function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    }
 
-        let url = "http://127.0.0.1:5000/dashboard-stats";
+    function updateDistributionChart(rate) {
+        const absentRate = 100 - rate;
 
-        if (selectedDate) {
-            url += "?date=" + selectedDate;
-        }
+        document.getElementById("presentBar").style.width = rate + "%";
+        document.getElementById("absentBar").style.width = absentRate + "%";
+
+        document.getElementById("presentPercent").innerText = rate + "%";
+        document.getElementById("absentPercent").innerText = absentRate + "%";
+    }
+
+    async function loadClasses() {
+        const select = document.getElementById("dashboardClass");
+        select.innerHTML = "";
 
         try {
-            const response = await fetch(url);
+            const response = await fetch("http://127.0.0.1:5000/classes");
             const data = await response.json();
 
-            document.getElementById("totalStudents").innerText = data.total_students;
-            document.getElementById("selectedDateAttendance").innerText = data.selected_date_attendance;
-            document.getElementById("totalRecords").innerText = data.total_attendance_records;
-
-            if (data.latest_attendance) {
-                document.getElementById("latestAttendance").innerText =
-                    data.latest_attendance.student_name +
-                    " (" + data.latest_attendance.student_id + ") - " +
-                    data.latest_attendance.timestamp;
-            } else {
-                document.getElementById("latestAttendance").innerText =
-                    "No attendance found for " + data.selected_date;
+            if (!data.classes || data.classes.length === 0) {
+                select.innerHTML = "<option>No classes found</option>";
+                return;
             }
 
+            data.classes.forEach(cls => {
+                const option = document.createElement("option");
+                option.value = cls.id;
+                option.textContent = cls.course_code + " - " + cls.course_name;
+                select.appendChild(option);
+            });
+
         } catch (error) {
-            alert("Request failed");
+            console.log(error);
+            select.innerHTML = "<option>Failed to load classes</option>";
         }
     }
 
-    window.onload = function () {
+    async function loadPolicyRisk(classId) {
+        const riskMessage = document.getElementById("riskMessage");
+        const riskList = document.getElementById("riskList");
+
+        riskList.innerHTML = "";
+        riskMessage.innerText = "Loading policy risk...";
+
+        try {
+            const riskResponse = await fetch(
+                "http://127.0.0.1:5000/policy-risk/" + classId
+            );
+
+            const riskData = await riskResponse.json();
+
+            if (!riskData.success) {
+                riskMessage.innerText = "Failed to load policy risk.";
+                riskList.innerHTML = "<li>Unable to evaluate policy.</li>";
+                return;
+            }
+
+            if (!riskData.has_policy) {
+                riskMessage.innerText = "No attendance policy set for this class.";
+                riskList.innerHTML = "<li>Create a policy from the Policies page.</li>";
+                return;
+            }
+
+            if (riskData.at_risk.length === 0) {
+                riskMessage.innerText =
+                    "Policy: " + riskData.policy_name +
+                    " | Limit: " + riskData.absence_limit + " absences";
+
+                riskList.innerHTML = "<li>No students currently violating this policy.</li>";
+                return;
+            }
+
+            riskMessage.innerText =
+                "Policy: " + riskData.policy_name +
+                " | Consequence: " + riskData.consequence;
+
+            riskData.at_risk.forEach(student => {
+                const li = document.createElement("li");
+
+                li.innerText =
+                    student.student_name +
+                    " (" + student.student_id + ") - " +
+                    student.absences +
+                    "/" +
+                    student.absence_limit +
+                    " absences";
+
+                riskList.appendChild(li);
+            });
+
+        } catch (error) {
+            console.log(error);
+            riskMessage.innerText = "Request failed.";
+            riskList.innerHTML = "<li>Could not load policy risk.</li>";
+        }
+    }
+
+    async function loadDashboard() {
+        const classId = document.getElementById("dashboardClass").value;
+        const selectedDate = document.getElementById("dashboardDate").value;
+
+        const recentTable = document.getElementById("recentAttendanceTable");
+        const recentMessage = document.getElementById("recentMessage");
+
+        recentTable.innerHTML = "";
+        recentMessage.innerText = "Loading dashboard...";
+
+        if (!classId || classId === "No classes found" || classId === "Failed to load classes") {
+            recentMessage.innerText = "Please select a valid class.";
+            updateDistributionChart(0);
+            return;
+        }
+
+        if (!selectedDate) {
+            recentMessage.innerText = "Please select a date.";
+            updateDistributionChart(0);
+            return;
+        }
+
+        try {
+            const rosterResponse = await fetch("http://127.0.0.1:5000/class-students/" + classId);
+            const rosterData = await rosterResponse.json();
+
+            const attendanceResponse = await fetch(
+                "http://127.0.0.1:5000/attendance?date=" + selectedDate + "&class_id=" + classId
+            );
+            const attendanceData = await attendanceResponse.json();
+
+            const totalStudents = rosterData.students.length;
+            const presentCount = attendanceData.attendance.length;
+            const absentCount = Math.max(totalStudents - presentCount, 0);
+
+            let rate = 0;
+            if (totalStudents > 0) {
+                rate = Math.round((presentCount / totalStudents) * 100);
+            }
+
+            document.getElementById("totalStudents").innerText = totalStudents;
+            document.getElementById("presentCount").innerText = presentCount;
+            document.getElementById("absentCount").innerText = absentCount;
+            document.getElementById("attendanceRate").innerText = rate + "%";
+
+            updateDistributionChart(rate);
+
+            if (attendanceData.attendance.length === 0) {
+                recentMessage.innerText = "No attendance records found for this class and date.";
+                recentTable.innerHTML = "";
+            } else {
+                recentMessage.innerText = "Showing recent check-ins for selected class and date.";
+
+                attendanceData.attendance.forEach((record, index) => {
+                    const row = document.createElement("tr");
+
+                    row.innerHTML = `
+                        <td>${index + 1}</td>
+                        <td>${record.student_name}</td>
+                        <td>${record.student_id}</td>
+                        <td>${formatTime(record.timestamp)}</td>
+                        <td>${record.status}</td>
+                    `;
+
+                    recentTable.appendChild(row);
+                });
+            }
+            await loadAttendanceTrend(classId);
+            await loadPolicyRisk(classId);
+
+        } catch (error) {
+            console.log(error);
+            recentMessage.innerText = "Request failed.";
+            updateDistributionChart(0);
+        }
+    }
+    async function loadAttendanceTrend(classId) {
+    const trendChart = document.getElementById("trendChart");
+    trendChart.innerHTML = "Loading trend...";
+
+    try {
+        const response = await fetch("http://127.0.0.1:5000/attendance-trend/" + classId);
+        const data = await response.json();
+
+        trendChart.innerHTML = "";
+
+        if (!data.trend || data.trend.length === 0) {
+            trendChart.innerHTML = "<p>No trend data available yet.</p>";
+            return;
+        }
+
+        data.trend.forEach(item => {
+            const row = document.createElement("div");
+            row.className = "trend-row";
+
+            row.innerHTML = `
+                <span class="trend-date">${item.date}</span>
+                <div class="bar-bg">
+                    <div class="bar-fill success-fill" style="width: ${item.attendance_rate}%;"></div>
+                </div>
+                <strong>${item.attendance_rate}%</strong>
+            `;
+
+            trendChart.appendChild(row);
+        });
+
+    } catch (error) {
+        console.log(error);
+        trendChart.innerHTML = "<p>Failed to load trend.</p>";
+    }
+}
+
+    window.onload = async function () {
         setTodayDate();
+        await loadClasses();
         loadDashboard();
     };
 </script>
