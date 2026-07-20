@@ -1,92 +1,101 @@
 import sqlite3
 
-conn = sqlite3.connect("database/attendance.db")
-cursor = conn.cursor()
 
-# Students table
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_name TEXT NOT NULL,
-    student_id TEXT UNIQUE NOT NULL,
-    image_path TEXT NOT NULL
-)
-""")
+def init_database(database_path):
+    conn = sqlite3.connect(database_path)
 
-# Multiple student images / alternate appearances
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS student_images (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    image_path TEXT NOT NULL,
-    appearance_label TEXT,
-    FOREIGN KEY (student_id) REFERENCES students(student_id)
-)
-""")
+    try:
+        cursor = conn.cursor()
 
-# Classes table
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS classes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    course_name TEXT NOT NULL,
-    course_code TEXT NOT NULL,
-    professor_name TEXT NOT NULL
-)
-""")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_name TEXT NOT NULL,
+                student_id TEXT UNIQUE NOT NULL,
+                image_path TEXT NOT NULL
+            )
+        """)
 
-# Students assigned to classes
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS class_students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    class_id INTEGER NOT NULL,
-    student_id TEXT NOT NULL,
-    FOREIGN KEY (class_id) REFERENCES classes(id),
-    FOREIGN KEY (student_id) REFERENCES students(student_id)
-)
-""")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS student_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL,
+                image_path TEXT NOT NULL,
+                appearance_label TEXT,
+                FOREIGN KEY (student_id)
+                    REFERENCES students(student_id)
+            )
+        """)
 
-# Attendance table
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    class_id INTEGER,
-    student_id TEXT NOT NULL,
-    student_name TEXT NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'Present',
-    FOREIGN KEY (class_id) REFERENCES classes(id)
-)
-""")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                course_name TEXT NOT NULL,
+                course_code TEXT NOT NULL,
+                professor_name TEXT NOT NULL
+            )
+        """)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS attendance_policies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    class_id INTEGER NOT NULL,
-    policy_name TEXT NOT NULL,
-    absence_limit INTEGER,
-    late_limit INTEGER,
-    late_minutes INTEGER,
-    attendance_weight INTEGER,
-    consequence TEXT,
-    excuse_counts TEXT DEFAULT 'No',
-    FOREIGN KEY (class_id) REFERENCES classes(id)
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS excuses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    class_id INTEGER NOT NULL,
-    excuse_date TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    status TEXT DEFAULT 'Pending',
-    submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (class_id) REFERENCES classes(id)
-)
-""")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS class_students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                class_id INTEGER NOT NULL,
+                student_id TEXT NOT NULL,
+                UNIQUE(class_id, student_id),
+                FOREIGN KEY (class_id)
+                    REFERENCES classes(id),
+                FOREIGN KEY (student_id)
+                    REFERENCES students(student_id)
+            )
+        """)
 
-conn.commit()
-conn.close()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS attendance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                class_id INTEGER,
+                student_id TEXT NOT NULL,
+                student_name TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'Present',
+                FOREIGN KEY (class_id)
+                    REFERENCES classes(id)
+            )
+        """)
 
-print("Database initialized successfully.")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS attendance_policies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                class_id INTEGER NOT NULL,
+                policy_name TEXT NOT NULL,
+                absence_limit INTEGER,
+                late_limit INTEGER,
+                late_minutes INTEGER,
+                attendance_weight INTEGER,
+                consequence TEXT,
+                excuse_counts TEXT DEFAULT 'No',
+                FOREIGN KEY (class_id)
+                    REFERENCES classes(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS excuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL,
+                class_id INTEGER NOT NULL,
+                excuse_date TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT DEFAULT 'Pending',
+                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (student_id)
+                    REFERENCES students(student_id),
+                FOREIGN KEY (class_id)
+                    REFERENCES classes(id)
+            )
+        """)
+
+        conn.commit()
+        print(f"Database initialized successfully: {database_path}")
+
+    finally:
+        conn.close()
