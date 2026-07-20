@@ -488,9 +488,16 @@ def create_class():
 
 @app.route("/classes", methods=["GET"])
 def get_classes():
-    conn = create_connection()
+    conn = None
 
     try:
+        print("CLASSES DATABASE PATH:", DATABASE_PATH)
+        print(
+            "CLASSES DATABASE EXISTS:",
+            os.path.exists(DATABASE_PATH),
+        )
+
+        conn = create_connection()
         cursor = conn.cursor()
 
         cursor.execute(
@@ -526,8 +533,23 @@ def get_classes():
             }
         ), 200
 
+    except Exception as error:
+        print("GET CLASSES ERROR:", repr(error))
+
+        return jsonify(
+            {
+                "success": False,
+                "error": str(error),
+                "database_path": DATABASE_PATH,
+                "database_exists": os.path.exists(
+                    DATABASE_PATH
+                ),
+            }
+        ), 500
+
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 # ---------------------------------------------------------
