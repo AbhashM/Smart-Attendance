@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
 import csv
@@ -10,6 +10,10 @@ import threading
 
 app = Flask(__name__)
 CORS(app)
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
 
 # ---------------------------------------------------------
 # Azure-safe absolute paths
@@ -1951,7 +1955,15 @@ def update_excuse_status(excuse_id):
 
     finally:
         conn.close()
+        
+@app.route("/")
+def serve_home():
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
+
+@app.route("/<path:filename>")
+def serve_frontend(filename):
+    return send_from_directory(FRONTEND_DIR, filename)
 
 # ---------------------------------------------------------
 # Local development only
