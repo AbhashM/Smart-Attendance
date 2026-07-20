@@ -7,25 +7,37 @@ import os
 import sqlite3
 import tempfile
 import threading
+import sys
+
 
 app = Flask(__name__)
 CORS(app)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-
 
 # ---------------------------------------------------------
-# Azure-safe absolute paths
+# Project paths
 # ---------------------------------------------------------
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 UPLOAD_FOLDER = os.path.join(BACKEND_DIR, "uploads")
-DATABASE_PATH = os.path.join(PROJECT_ROOT, "database", "attendance.db")
+DATABASE_PATH = os.path.join(
+    PROJECT_ROOT,
+    "database",
+    "attendance.db",
+)
+
+sys.path.append(PROJECT_ROOT)
+
+from database.init_db import init_database
+
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
+os.makedirs(
+    os.path.dirname(DATABASE_PATH),
+    exist_ok=True,
+)
 
 # ---------------------------------------------------------
 # Lazy-loaded AI dependencies
