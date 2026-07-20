@@ -54,7 +54,7 @@
         <tbody id="attendanceTable"></tbody>
     </table>
 </div>
-
+<script src="config.js"></script>
 <script>
     function formatTime(timestamp) {
         const date = new Date(timestamp);
@@ -69,7 +69,7 @@
         select.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
             if (data.classes.length === 0) {
@@ -106,7 +106,7 @@
 
         message.innerText = "Loading attendance records...";
 
-        const url = "http://127.0.0.1:5000/attendance?date=" + selectedDate + "&class_id=" + classId;
+        const url = `${API_BASE_URL}/attendance?date=${selectedDate}&class_id=${classId}`;
 
         try {
             const response = await fetch(url);

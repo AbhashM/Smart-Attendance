@@ -12,5 +12,7 @@ exec gunicorn \
   --bind=0.0.0.0:8000 \
   --timeout 1200 \
   --workers 1 \
+  --access-logfile - \
+  --error-logfile - \
   --chdir backend \
   app:app
