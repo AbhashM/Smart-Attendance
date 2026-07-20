@@ -91,7 +91,7 @@ def safe_remove(path):
 # ---------------------------------------------------------
 # Health routes
 # ---------------------------------------------------------
-@app.route("/", methods=["GET"])
+@app.route("/api", methods=["GET"])
 def home():
     return jsonify(
         {
