@@ -1,8 +1,10 @@
-opencv-python-headless
-mediapipe==0.10.14
 flask
 flask-cors
 deepface
+mediapipe==0.10.14
 tf-keras
 gunicorn
 psycopg2-binary
+protobuf==4.25.3
+SQLAlchemy>=2.0
+psycopg[binary]>=3.1
