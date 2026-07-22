@@ -107,6 +107,7 @@
         </table>
     </div>
 </div>
+<script src="config.js"></script>
 
 <script>
     let currentPolicies = [];
@@ -116,102 +117,148 @@
         select.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            if (!data.classes || data.classes.length === 0) {
-                select.innerHTML = "<option>No classes found</option>";
+            if (!response.ok || !data.classes || data.classes.length === 0) {
+                select.innerHTML = '<option value="">No classes found</option>';
                 return;
             }
 
             data.classes.forEach(cls => {
                 const option = document.createElement("option");
                 option.value = cls.id;
-                option.textContent = cls.course_code + " - " + cls.course_name;
+                option.textContent =
+                    cls.course_code + " - " + cls.course_name;
                 select.appendChild(option);
             });
 
-            loadPolicies();
+            await loadPolicies();
 
         } catch (error) {
             console.log(error);
-            select.innerHTML = "<option>Failed to load classes</option>";
+            select.innerHTML =
+                '<option value="">Failed to load classes</option>';
         }
     }
 
     async function savePolicy() {
-        const editingPolicyId = document.getElementById("editingPolicyId").value;
-        const classId = document.getElementById("classSelect").value;
-        const result = document.getElementById("result");
+        const editingPolicyId =
+            document.getElementById("editingPolicyId").value;
+
+        const classId =
+            document.getElementById("classSelect").value;
+
+        const result =
+            document.getElementById("result");
+
+        if (!classId) {
+            result.innerText = "Please select a valid class.";
+            return;
+        }
 
         const payload = {
             class_id: classId,
             policy_name: document.getElementById("policyName").value,
-            attendance_weight: document.getElementById("attendanceWeight").value,
-            absence_limit: document.getElementById("absenceLimit").value,
-            late_limit: document.getElementById("lateLimit").value,
-            late_minutes: document.getElementById("lateMinutes").value,
-            excuse_counts: document.getElementById("excuseCounts").value,
-            consequence: document.getElementById("consequence").value
+            attendance_weight:
+                document.getElementById("attendanceWeight").value,
+            absence_limit:
+                document.getElementById("absenceLimit").value,
+            late_limit:
+                document.getElementById("lateLimit").value,
+            late_minutes:
+                document.getElementById("lateMinutes").value,
+            excuse_counts:
+                document.getElementById("excuseCounts").value,
+            consequence:
+                document.getElementById("consequence").value
         };
 
         try {
             let response;
 
             if (editingPolicyId) {
-                response = await fetch("http://127.0.0.1:5000/attendance-policies/" + editingPolicyId, {
-                    method: "PUT",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify(payload)
-                });
+                response = await fetch(
+                    `${API_BASE_URL}/attendance-policies/${editingPolicyId}`,
+                    {
+                        method: "PUT",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify(payload)
+                    }
+                );
             } else {
                 const formData = new FormData();
+
                 Object.keys(payload).forEach(key => {
                     formData.append(key, payload[key]);
                 });
 
-                response = await fetch("http://127.0.0.1:5000/attendance-policies", {
-                    method: "POST",
-                    body: formData
-                });
+                response = await fetch(
+                    `${API_BASE_URL}/attendance-policies`,
+                    {
+                        method: "POST",
+                        body: formData
+                    }
+                );
             }
 
             const data = await response.json();
 
-            if (data.success) {
-                result.innerText = editingPolicyId ? "Policy updated successfully." : "Policy saved successfully.";
+            if (response.ok && data.success) {
+                result.innerText = editingPolicyId
+                    ? "Policy updated successfully."
+                    : "Policy saved successfully.";
+
                 clearForm();
-                loadPolicies();
+                await loadPolicies();
             } else {
-                result.innerText = "Error: " + data.error;
+                result.innerText =
+                    "Error: " +
+                    (data.error || "Unable to save policy.");
             }
+
         } catch (error) {
+            console.log(error);
             result.innerText = "Request failed.";
         }
     }
 
     async function loadPolicies() {
-        const classId = document.getElementById("classSelect").value;
-        const table = document.getElementById("policiesTable");
+        const classId =
+            document.getElementById("classSelect").value;
+
+        const table =
+            document.getElementById("policiesTable");
 
         table.innerHTML = "";
         currentPolicies = [];
 
-        if (!classId || classId === "No classes found") {
-            table.innerHTML = "<tr><td colspan='7'>Please select a valid class</td></tr>";
+        if (!classId) {
+            table.innerHTML =
+                "<tr><td colspan='7'>Please select a valid class</td></tr>";
             return;
         }
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/attendance-policies/" + classId);
+            const response = await fetch(
+                `${API_BASE_URL}/attendance-policies/${classId}`
+            );
+
             const data = await response.json();
+
+            if (!response.ok) {
+                table.innerHTML =
+                    "<tr><td colspan='7'>Failed to load policies</td></tr>";
+                return;
+            }
 
             currentPolicies = data.policies || [];
 
             if (currentPolicies.length === 0) {
-                table.innerHTML = "<tr><td colspan='7'>No policies found for this class</td></tr>";
+                table.innerHTML =
+                    "<tr><td colspan='7'>No policies found for this class</td></tr>";
                 return;
             }
 
@@ -227,8 +274,15 @@
                     <td>${policy.consequence || "N/A"}</td>
                     <td>
                         <div class="action-buttons">
-                            <button onclick="editPolicy(${policy.id})">Edit</button>
-                            <button class="danger-btn" onclick="deletePolicy(${policy.id})">Delete</button>
+                            <button onclick="editPolicy(${policy.id})">
+                                Edit
+                            </button>
+                            <button
+                                class="danger-btn"
+                                onclick="deletePolicy(${policy.id})"
+                            >
+                                Delete
+                            </button>
                         </div>
                     </td>
                 `;
@@ -237,54 +291,88 @@
             });
 
         } catch (error) {
-            table.innerHTML = "<tr><td colspan='7'>Request failed</td></tr>";
+            console.log(error);
+            table.innerHTML =
+                "<tr><td colspan='7'>Request failed</td></tr>";
         }
     }
 
     function editPolicy(policyId) {
-        const policy = currentPolicies.find(p => p.id === policyId);
+        const policy =
+            currentPolicies.find(p => p.id === policyId);
 
         if (!policy) {
             return;
         }
 
-        document.getElementById("editingPolicyId").value = policy.id;
-        document.getElementById("policyName").value = policy.policy_name || "";
-        document.getElementById("attendanceWeight").value = policy.attendance_weight || "";
-        document.getElementById("absenceLimit").value = policy.absence_limit || "";
-        document.getElementById("lateLimit").value = policy.late_limit || "";
-        document.getElementById("lateMinutes").value = policy.late_minutes || "";
-        document.getElementById("excuseCounts").value = policy.excuse_counts || "No";
-        document.getElementById("consequence").value = policy.consequence || "";
+        document.getElementById("editingPolicyId").value =
+            policy.id;
 
-        document.getElementById("formTitle").innerText = "Edit Policy";
-        document.getElementById("saveButton").innerText = "Update Policy";
-        document.getElementById("result").innerText = "Editing selected policy.";
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        document.getElementById("policyName").value =
+            policy.policy_name || "";
+
+        document.getElementById("attendanceWeight").value =
+            policy.attendance_weight || "";
+
+        document.getElementById("absenceLimit").value =
+            policy.absence_limit || "";
+
+        document.getElementById("lateLimit").value =
+            policy.late_limit || "";
+
+        document.getElementById("lateMinutes").value =
+            policy.late_minutes || "";
+
+        document.getElementById("excuseCounts").value =
+            policy.excuse_counts || "No";
+
+        document.getElementById("consequence").value =
+            policy.consequence || "";
+
+        document.getElementById("formTitle").innerText =
+            "Edit Policy";
+
+        document.getElementById("saveButton").innerText =
+            "Update Policy";
+
+        document.getElementById("result").innerText =
+            "Editing selected policy.";
+
+        window.scrollTo({
+            top: 0,
+            behavior: "smooth"
+        });
     }
 
     async function deletePolicy(policyId) {
-        const confirmed = confirm("Are you sure you want to delete this policy?");
+        const confirmed =
+            confirm("Are you sure you want to delete this policy?");
 
         if (!confirmed) {
             return;
         }
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/attendance-policies/" + policyId, {
-                method: "DELETE"
-            });
+            const response = await fetch(
+                `${API_BASE_URL}/attendance-policies/${policyId}`,
+                {
+                    method: "DELETE"
+                }
+            );
 
             const data = await response.json();
 
-            if (data.success) {
-                loadPolicies();
+            if (response.ok && data.success) {
+                await loadPolicies();
                 clearForm();
             } else {
-                alert("Error deleting policy.");
+                alert(
+                    data.error || "Error deleting policy."
+                );
             }
 
         } catch (error) {
+            console.log(error);
             alert("Request failed.");
         }
     }
@@ -299,19 +387,25 @@
         document.getElementById("excuseCounts").value = "No";
         document.getElementById("consequence").value = "";
 
-        document.getElementById("formTitle").innerText = "Create Policy";
-        document.getElementById("saveButton").innerText = "Save Policy";
+        document.getElementById("formTitle").innerText =
+            "Create Policy";
+
+        document.getElementById("saveButton").innerText =
+            "Save Policy";
     }
 
     function cancelEdit() {
         clearForm();
-        document.getElementById("result").innerText = "Edit cancelled.";
+        document.getElementById("result").innerText =
+            "Edit cancelled.";
     }
 
-    document.getElementById("classSelect").addEventListener("change", function () {
-        clearForm();
-        loadPolicies();
-    });
+    document
+        .getElementById("classSelect")
+        .addEventListener("change", function () {
+            clearForm();
+            loadPolicies();
+        });
 
     window.onload = loadClasses;
 </script>

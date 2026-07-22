@@ -131,7 +131,7 @@
     </div>
 
 </div>
-
+<script src="config.js"></script>
 <script>
     function setTodayDate() {
         const today = new Date().toISOString().split("T")[0];
@@ -161,10 +161,10 @@
         select.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            if (!data.classes || data.classes.length === 0) {
+            if (!response.ok || !data.classes || data.classes.length === 0) {
                 select.innerHTML = "<option>No classes found</option>";
                 return;
             }
@@ -191,7 +191,7 @@
 
         try {
             const riskResponse = await fetch(
-                "http://127.0.0.1:5000/policy-risk/" + classId
+                `${API_BASE_URL}/policy-risk/${classId}`
             );
 
             const riskData = await riskResponse.json();
@@ -265,11 +265,13 @@
         }
 
         try {
-            const rosterResponse = await fetch("http://127.0.0.1:5000/class-students/" + classId);
+            const rosterResponse = await fetch(
+                `${API_BASE_URL}/class-students/${classId}`
+            );
             const rosterData = await rosterResponse.json();
 
             const attendanceResponse = await fetch(
-                "http://127.0.0.1:5000/attendance?date=" + selectedDate + "&class_id=" + classId
+                `${API_BASE_URL}/attendance?date=${selectedDate}&class_id=${classId}`
             );
             const attendanceData = await attendanceResponse.json();
 
@@ -278,6 +280,7 @@
             const absentCount = Math.max(totalStudents - presentCount, 0);
 
             let rate = 0;
+
             if (totalStudents > 0) {
                 rate = Math.round((presentCount / totalStudents) * 100);
             }
@@ -290,10 +293,12 @@
             updateDistributionChart(rate);
 
             if (attendanceData.attendance.length === 0) {
-                recentMessage.innerText = "No attendance records found for this class and date.";
+                recentMessage.innerText =
+                    "No attendance records found for this class and date.";
                 recentTable.innerHTML = "";
             } else {
-                recentMessage.innerText = "Showing recent check-ins for selected class and date.";
+                recentMessage.innerText =
+                    "Showing recent check-ins for selected class and date.";
 
                 attendanceData.attendance.forEach((record, index) => {
                     const row = document.createElement("tr");
@@ -309,6 +314,7 @@
                     recentTable.appendChild(row);
                 });
             }
+
             await loadAttendanceTrend(classId);
             await loadPolicyRisk(classId);
 
@@ -318,41 +324,46 @@
             updateDistributionChart(0);
         }
     }
+
     async function loadAttendanceTrend(classId) {
-    const trendChart = document.getElementById("trendChart");
-    trendChart.innerHTML = "Loading trend...";
+        const trendChart = document.getElementById("trendChart");
+        trendChart.innerHTML = "Loading trend...";
 
-    try {
-        const response = await fetch("http://127.0.0.1:5000/attendance-trend/" + classId);
-        const data = await response.json();
+        try {
+            const response = await fetch(
+                `${API_BASE_URL}/attendance-trend/${classId}`
+            );
+            const data = await response.json();
 
-        trendChart.innerHTML = "";
+            trendChart.innerHTML = "";
 
-        if (!data.trend || data.trend.length === 0) {
-            trendChart.innerHTML = "<p>No trend data available yet.</p>";
-            return;
+            if (!data.trend || data.trend.length === 0) {
+                trendChart.innerHTML = "<p>No trend data available yet.</p>";
+                return;
+            }
+
+            data.trend.forEach(item => {
+                const row = document.createElement("div");
+                row.className = "trend-row";
+
+                row.innerHTML = `
+                    <span class="trend-date">${item.date}</span>
+                    <div class="bar-bg">
+                        <div class="bar-fill success-fill"
+                             style="width:${item.attendance_rate}%;">
+                        </div>
+                    </div>
+                    <strong>${item.attendance_rate}%</strong>
+                `;
+
+                trendChart.appendChild(row);
+            });
+
+        } catch (error) {
+            console.log(error);
+            trendChart.innerHTML = "<p>Failed to load trend.</p>";
         }
-
-        data.trend.forEach(item => {
-            const row = document.createElement("div");
-            row.className = "trend-row";
-
-            row.innerHTML = `
-                <span class="trend-date">${item.date}</span>
-                <div class="bar-bg">
-                    <div class="bar-fill success-fill" style="width: ${item.attendance_rate}%;"></div>
-                </div>
-                <strong>${item.attendance_rate}%</strong>
-            `;
-
-            trendChart.appendChild(row);
-        });
-
-    } catch (error) {
-        console.log(error);
-        trendChart.innerHTML = "<p>Failed to load trend.</p>";
     }
-}
 
     window.onload = async function () {
         setTodayDate();
@@ -360,6 +371,5 @@
         loadDashboard();
     };
 </script>
-
-</body>
+</body> 
 </html>

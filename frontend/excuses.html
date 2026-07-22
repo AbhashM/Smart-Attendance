@@ -50,7 +50,11 @@
 
             <div class="form-group full-width">
                 <label>Reason</label>
-                <input type="text" id="reason" placeholder="Example: Doctor appointment, illness, family emergency">
+                <input
+                    type="text"
+                    id="reason"
+                    placeholder="Example: Doctor appointment, illness, family emergency"
+                >
             </div>
         </div>
 
@@ -86,44 +90,55 @@
     </div>
 </div>
 
+<script src="config.js"></script>
+
 <script>
     async function loadClasses() {
         const select = document.getElementById("classSelect");
         select.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            if (!data.classes || data.classes.length === 0) {
-                select.innerHTML = "<option>No classes found</option>";
+            if (!response.ok || !data.classes || data.classes.length === 0) {
+                select.innerHTML = '<option value="">No classes found</option>';
                 return;
             }
 
             data.classes.forEach(cls => {
                 const option = document.createElement("option");
                 option.value = cls.id;
-                option.textContent = cls.course_code + " - " + cls.course_name;
+                option.textContent =
+                    cls.course_code + " - " + cls.course_name;
                 select.appendChild(option);
             });
 
         } catch (error) {
             console.log(error);
-            select.innerHTML = "<option>Failed to load classes</option>";
+            select.innerHTML =
+                '<option value="">Failed to load classes</option>';
         }
     }
 
     async function submitExcuse() {
-        const studentId = document.getElementById("studentId").value;
-        const classId = document.getElementById("classSelect").value;
-        const excuseDate = document.getElementById("excuseDate").value;
-        const reason = document.getElementById("reason").value;
-        const result = document.getElementById("submitResult");
+        const studentId =
+            document.getElementById("studentId").value.trim();
+        const classId =
+            document.getElementById("classSelect").value;
+        const excuseDate =
+            document.getElementById("excuseDate").value;
+        const reason =
+            document.getElementById("reason").value.trim();
+        const result =
+            document.getElementById("submitResult");
 
         if (!studentId || !classId || !excuseDate || !reason) {
             result.innerText = "Please fill out all fields.";
             return;
         }
+
+        result.innerText = "Submitting excuse...";
 
         const formData = new FormData();
         formData.append("student_id", studentId);
@@ -132,41 +147,70 @@
         formData.append("reason", reason);
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/excuses", {
+            const response = await fetch(`${API_BASE_URL}/excuses`, {
                 method: "POST",
                 body: formData
             });
 
             const data = await response.json();
 
-            if (data.success) {
+            if (response.ok && data.success) {
                 result.innerText = "Excuse submitted successfully.";
                 document.getElementById("reason").value = "";
-                loadExcuses();
+                await loadExcuses();
             } else {
-                result.innerText = "Error: " + data.error;
+                result.innerText =
+                    "Error: " + (data.error || "Unable to submit excuse.");
             }
 
         } catch (error) {
+            console.log(error);
             result.innerText = "Request failed.";
         }
     }
 
     async function loadExcuses() {
         const table = document.getElementById("excusesTable");
-        table.innerHTML = "";
+        table.innerHTML =
+            "<tr><td colspan='8'>Loading excuse requests...</td></tr>";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/excuses");
+            const response = await fetch(`${API_BASE_URL}/excuses`);
             const data = await response.json();
 
+            table.innerHTML = "";
+
+            if (!response.ok) {
+                table.innerHTML =
+                    "<tr><td colspan='8'>Failed to load excuse requests.</td></tr>";
+                return;
+            }
+
             if (!data.excuses || data.excuses.length === 0) {
-                table.innerHTML = "<tr><td colspan='8'>No excuse requests found.</td></tr>";
+                table.innerHTML =
+                    "<tr><td colspan='8'>No excuse requests found.</td></tr>";
                 return;
             }
 
             data.excuses.forEach((excuse, index) => {
                 const row = document.createElement("tr");
+
+                const actions =
+                    excuse.status === "Pending"
+                        ? `
+                            <div class="action-buttons">
+                                <button onclick="updateExcuse(${excuse.id}, 'Approved')">
+                                    Approve
+                                </button>
+                                <button
+                                    class="danger-btn"
+                                    onclick="updateExcuse(${excuse.id}, 'Rejected')"
+                                >
+                                    Reject
+                                </button>
+                            </div>
+                        `
+                        : `<span class="badge">${excuse.status}</span>`;
 
                 row.innerHTML = `
                     <td>${index + 1}</td>
@@ -176,54 +220,49 @@
                     <td>${excuse.reason}</td>
                     <td>${excuse.status}</td>
                     <td>${excuse.submitted_at}</td>
-                    <td>
-    ${
-        excuse.status === "Pending"
-        ? `
-            <div class="action-buttons">
-                <button onclick="updateExcuse(${excuse.id}, 'Approved')">Approve</button>
-                <button class="danger-btn" onclick="updateExcuse(${excuse.id}, 'Rejected')">Reject</button>
-            </div>
-          `
-        : `<span class="badge">${excuse.status}</span>`
-    }
-</td>
+                    <td>${actions}</td>
                 `;
 
                 table.appendChild(row);
             });
 
         } catch (error) {
-            table.innerHTML = "<tr><td colspan='8'>Request failed.</td></tr>";
+            console.log(error);
+            table.innerHTML =
+                "<tr><td colspan='8'>Request failed.</td></tr>";
         }
     }
 
     async function updateExcuse(excuseId, status) {
         try {
-            const response = await fetch("http://127.0.0.1:5000/excuses/" + excuseId, {
-                method: "PUT",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ status: status })
-            });
+            const response = await fetch(
+                `${API_BASE_URL}/excuses/${excuseId}`,
+                {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ status })
+                }
+            );
 
             const data = await response.json();
 
-            if (data.success) {
-                loadExcuses();
+            if (response.ok && data.success) {
+                await loadExcuses();
             } else {
-                alert("Error updating excuse.");
+                alert(data.error || "Error updating excuse.");
             }
 
         } catch (error) {
+            console.log(error);
             alert("Request failed.");
         }
     }
 
     window.onload = async function () {
         await loadClasses();
-        loadExcuses();
+        await loadExcuses();
     };
 </script>
 

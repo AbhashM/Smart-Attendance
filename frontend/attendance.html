@@ -54,10 +54,13 @@
         <tbody id="attendanceTable"></tbody>
     </table>
 </div>
+
 <script src="config.js"></script>
+
 <script>
     function formatTime(timestamp) {
         const date = new Date(timestamp);
+
         return date.toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit"
@@ -72,20 +75,24 @@
             const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            if (data.classes.length === 0) {
-                select.innerHTML = "<option>No classes found</option>";
+            if (!data.success || data.classes.length === 0) {
+                select.innerHTML = '<option value="">No classes found</option>';
                 return;
             }
 
             data.classes.forEach(cls => {
                 const option = document.createElement("option");
+
                 option.value = cls.id;
-                option.textContent = cls.course_code + " - " + cls.course_name;
+                option.textContent =
+                    cls.course_code + " - " + cls.course_name;
+
                 select.appendChild(option);
             });
 
         } catch (error) {
             console.log(error);
+            select.innerHTML = '<option value="">Unable to load classes</option>';
         }
     }
 
@@ -93,38 +100,46 @@
         const table = document.getElementById("attendanceTable");
         const count = document.getElementById("count");
         const message = document.getElementById("message");
-        const selectedDate = document.getElementById("attendanceDate").value;
-        const classId = document.getElementById("classSelect").value;
+        const selectedDate =
+            document.getElementById("attendanceDate").value;
+        const classId =
+            document.getElementById("classSelect").value;
 
         table.innerHTML = "";
         count.innerText = "Total Records: 0";
 
-        if (!selectedDate || !classId || classId === "No classes found") {
-            message.innerText = "Please select a class and date to view attendance records.";
+        if (!selectedDate || !classId) {
+            message.innerText =
+                "Please select a class and date to view attendance records.";
             return;
         }
 
         message.innerText = "Loading attendance records...";
 
-        const url = `${API_BASE_URL}/attendance?date=${selectedDate}&class_id=${classId}`;
+        const url =
+            `${API_BASE_URL}/attendance?date=${selectedDate}&class_id=${classId}`;
 
         try {
             const response = await fetch(url);
             const data = await response.json();
 
-            if (!data.success) {
-                message.innerText = "Failed to load attendance records.";
+            if (!response.ok || !data.success) {
+                message.innerText =
+                    data.error || "Failed to load attendance records.";
                 return;
             }
 
-            count.innerText = "Total Records: " + data.attendance.length;
+            count.innerText =
+                "Total Records: " + data.attendance.length;
 
             if (data.attendance.length === 0) {
-                message.innerText = "No attendance records found for this class and date.";
+                message.innerText =
+                    "No attendance records found for this class and date.";
                 return;
             }
 
-            message.innerText = "Showing attendance for selected class on " + selectedDate;
+            message.innerText =
+                "Showing attendance for selected class on " + selectedDate;
 
             data.attendance.forEach((record, index) => {
                 const row = document.createElement("tr");
@@ -147,19 +162,18 @@
     }
 
     function exportAttendance() {
-        const selectedDate = document.getElementById("attendanceDate").value;
-        const classId = document.getElementById("classSelect").value;
+        const selectedDate =
+            document.getElementById("attendanceDate").value;
+        const classId =
+            document.getElementById("classSelect").value;
 
-        if (!selectedDate || !classId || classId === "No classes found") {
+        if (!selectedDate || !classId) {
             alert("Please select a class and date before exporting.");
             return;
         }
 
         const url =
-            "http://127.0.0.1:5000/export-attendance?date=" +
-            selectedDate +
-            "&class_id=" +
-            classId;
+            `${API_BASE_URL}/export-attendance?date=${selectedDate}&class_id=${classId}`;
 
         window.location.href = url;
     }

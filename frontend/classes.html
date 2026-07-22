@@ -100,6 +100,7 @@
     </div>
 
 </div>
+<script src="config.js"></script>
 
 <script>
     let allClasses = [];
@@ -107,28 +108,40 @@
 
     async function createClass() {
         const formData = new FormData();
-        formData.append("course_name", document.getElementById("courseName").value);
-        formData.append("course_code", document.getElementById("courseCode").value);
-        formData.append("professor_name", document.getElementById("professorName").value);
+        formData.append(
+            "course_name",
+            document.getElementById("courseName").value
+        );
+        formData.append(
+            "course_code",
+            document.getElementById("courseCode").value
+        );
+        formData.append(
+            "professor_name",
+            document.getElementById("professorName").value
+        );
 
         const result = document.getElementById("createResult");
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes", {
+            const response = await fetch(`${API_BASE_URL}/classes`, {
                 method: "POST",
                 body: formData
             });
 
             const data = await response.json();
 
-            if (data.success) {
+            if (response.ok && data.success) {
                 result.innerText = "Class created successfully.";
                 await loadClasses();
                 populateClassDropdowns();
             } else {
-                result.innerText = "Error: " + data.error;
+                result.innerText =
+                    "Error: " + (data.error || "Unable to create class.");
             }
+
         } catch (error) {
+            console.log(error);
             result.innerText = "Request failed.";
         }
     }
@@ -138,17 +151,20 @@
         table.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            allClasses = data.classes;
+            allClasses = data.classes || [];
 
-            if (data.classes.length === 0) {
-                table.innerHTML = "<tr><td colspan='4'>No classes found</td></tr>";
+            if (!response.ok || allClasses.length === 0) {
+                table.innerHTML =
+                    "<tr><td colspan='4'>No classes found</td></tr>";
+
+                populateClassDropdowns();
                 return;
             }
 
-            data.classes.forEach(cls => {
+            allClasses.forEach(cls => {
                 const row = document.createElement("tr");
 
                 row.innerHTML = `
@@ -164,52 +180,75 @@
             populateClassDropdowns();
 
         } catch (error) {
-            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+            console.log(error);
+
+            allClasses = [];
+            table.innerHTML =
+                "<tr><td colspan='4'>Request failed</td></tr>";
+
+            populateClassDropdowns();
         }
     }
 
     async function loadStudents() {
+        const studentSelect =
+            document.getElementById("studentSelect");
+
+        studentSelect.innerHTML = "";
+
         try {
-            const response = await fetch("http://127.0.0.1:5000/students");
+            const response = await fetch(`${API_BASE_URL}/students`);
             const data = await response.json();
 
-            allStudents = data.students;
+            allStudents = data.students || [];
 
-            const studentSelect = document.getElementById("studentSelect");
-            studentSelect.innerHTML = "";
-
-            if (allStudents.length === 0) {
-                studentSelect.innerHTML = "<option>No students found</option>";
+            if (!response.ok || allStudents.length === 0) {
+                studentSelect.innerHTML =
+                    '<option value="">No students found</option>';
                 return;
             }
 
             allStudents.forEach(student => {
                 const option = document.createElement("option");
+
                 option.value = student.student_id;
-                option.textContent = `${student.student_name} (${student.student_id})`;
+                option.textContent =
+                    `${student.student_name} (${student.student_id})`;
+
                 studentSelect.appendChild(option);
             });
 
         } catch (error) {
             console.log(error);
+
+            allStudents = [];
+            studentSelect.innerHTML =
+                '<option value="">Failed to load students</option>';
         }
     }
 
     function populateClassDropdowns() {
-        const classSelect = document.getElementById("classSelect");
-        const rosterClassSelect = document.getElementById("rosterClassSelect");
+        const classSelect =
+            document.getElementById("classSelect");
+        const rosterClassSelect =
+            document.getElementById("rosterClassSelect");
 
         classSelect.innerHTML = "";
         rosterClassSelect.innerHTML = "";
 
         if (allClasses.length === 0) {
-            classSelect.innerHTML = "<option>No classes found</option>";
-            rosterClassSelect.innerHTML = "<option>No classes found</option>";
+            classSelect.innerHTML =
+                '<option value="">No classes found</option>';
+
+            rosterClassSelect.innerHTML =
+                '<option value="">No classes found</option>';
+
             return;
         }
 
         allClasses.forEach(cls => {
-            const label = `${cls.course_code} - ${cls.course_name}`;
+            const label =
+                `${cls.course_code} - ${cls.course_name}`;
 
             const option1 = document.createElement("option");
             option1.value = cls.id;
@@ -226,57 +265,92 @@
     }
 
     async function addStudentToClass() {
-        const classId = document.getElementById("classSelect").value;
-        const studentId = document.getElementById("studentSelect").value;
-        const result = document.getElementById("addResult");
+        const classId =
+            document.getElementById("classSelect").value;
+
+        const studentId =
+            document.getElementById("studentSelect").value;
+
+        const result =
+            document.getElementById("addResult");
+
+        if (!classId || !studentId) {
+            result.innerText =
+                "Please select a valid class and student.";
+            return;
+        }
 
         const formData = new FormData();
         formData.append("class_id", classId);
         formData.append("student_id", studentId);
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/class-students", {
-                method: "POST",
-                body: formData
-            });
+            const response = await fetch(
+                `${API_BASE_URL}/class-students`,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
 
             const data = await response.json();
 
-            if (data.success) {
+            if (response.ok && data.success) {
                 result.innerText = "Student added to class.";
-                loadRoster();
+                await loadRoster();
             } else {
-                result.innerText = "Error: " + data.error;
+                result.innerText =
+                    "Error: " +
+                    (data.error || "Unable to add student.");
             }
+
         } catch (error) {
+            console.log(error);
             result.innerText = "Request failed.";
         }
     }
 
     async function loadRoster() {
-        const classId = document.getElementById("rosterClassSelect").value;
-        const table = document.getElementById("rosterTable");
-        const count = document.getElementById("rosterCount");
+        const classId =
+            document.getElementById("rosterClassSelect").value;
+
+        const table =
+            document.getElementById("rosterTable");
+
+        const count =
+            document.getElementById("rosterCount");
 
         table.innerHTML = "";
         count.innerText = "Total Students: 0";
 
-        if (!classId || classId === "No classes found") {
+        if (!classId) {
             return;
         }
 
         try {
-            const response = await fetch(`http://127.0.0.1:5000/class-students/${classId}`);
+            const response = await fetch(
+                `${API_BASE_URL}/class-students/${classId}`
+            );
+
             const data = await response.json();
+            const students = data.students || [];
 
-            count.innerText = "Total Students: " + data.students.length;
-
-            if (data.students.length === 0) {
-                table.innerHTML = "<tr><td colspan='4'>No students enrolled in this class</td></tr>";
+            if (!response.ok) {
+                table.innerHTML =
+                    "<tr><td colspan='4'>Failed to load roster</td></tr>";
                 return;
             }
 
-            data.students.forEach((student, index) => {
+            count.innerText =
+                "Total Students: " + students.length;
+
+            if (students.length === 0) {
+                table.innerHTML =
+                    "<tr><td colspan='4'>No students enrolled in this class</td></tr>";
+                return;
+            }
+
+            students.forEach((student, index) => {
                 const row = document.createElement("tr");
 
                 row.innerHTML = `
@@ -284,7 +358,12 @@
                     <td>${student.student_id}</td>
                     <td>${student.student_name}</td>
                     <td>
-                        <button onclick="removeStudentFromClass('${classId}', '${student.student_id}')">
+                        <button
+                            onclick="removeStudentFromClass(
+                                '${classId}',
+                                '${student.student_id}'
+                            )"
+                        >
                             Remove
                         </button>
                     </td>
@@ -294,25 +373,35 @@
             });
 
         } catch (error) {
-            table.innerHTML = "<tr><td colspan='4'>Request failed</td></tr>";
+            console.log(error);
+
+            table.innerHTML =
+                "<tr><td colspan='4'>Request failed</td></tr>";
         }
     }
 
     async function removeStudentFromClass(classId, studentId) {
         try {
-            const response = await fetch(`http://127.0.0.1:5000/class-students/${classId}/${studentId}`, {
-                method: "DELETE"
-            });
+            const response = await fetch(
+                `${API_BASE_URL}/class-students/${classId}/${studentId}`,
+                {
+                    method: "DELETE"
+                }
+            );
 
             const data = await response.json();
 
-            if (data.success) {
-                loadRoster();
+            if (response.ok && data.success) {
+                await loadRoster();
             } else {
-                alert("Error removing student.");
+                alert(
+                    data.error ||
+                    "Error removing student."
+                );
             }
 
         } catch (error) {
+            console.log(error);
             alert("Request failed.");
         }
     }
@@ -320,7 +409,6 @@
     window.onload = async function () {
         await loadClasses();
         await loadStudents();
-        populateClassDropdowns();
     };
 </script>
 

@@ -10,7 +10,7 @@
 <div class="navbar">
     <h1>Smart Attendance</h1>
     <div class="nav-links">
-       <a href="index.html">Home</a>
+        <a href="index.html">Home</a>
         <a href="register.html">Register</a>
         <a href="appearances.html">Appearances</a>
         <a href="classes.html">Classes</a>
@@ -27,46 +27,96 @@
         <h2>Register Student</h2>
 
         <form id="registerForm">
-            <input type="text" id="studentName" placeholder="Student Name" required>
+            <input
+                type="text"
+                id="studentName"
+                placeholder="Student Name"
+                required
+            >
             <br>
-            <input type="text" id="studentId" placeholder="Student ID" required>
+
+            <input
+                type="text"
+                id="studentId"
+                placeholder="Student ID"
+                required
+            >
             <br>
-            <input type="file" id="studentImage" required>
+
+            <input
+                type="file"
+                id="studentImage"
+                accept="image/*"
+                required
+            >
             <br><br>
-            <button type="submit">Register Student</button>
+
+            <button id="registerBtn" type="submit">
+                Register Student
+            </button>
         </form>
 
         <p id="result"></p>
     </div>
 </div>
+
 <script src="config.js"></script>
+
 <script>
     const form = document.getElementById("registerForm");
     const resultText = document.getElementById("result");
+    const registerButton = document.getElementById("registerBtn");
 
-    form.addEventListener("submit", async (e) => {
-        e.preventDefault();
+    form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+
+        const studentName =
+            document.getElementById("studentName").value.trim();
+
+        const studentId =
+            document.getElementById("studentId").value.trim();
+
+        const imageInput =
+            document.getElementById("studentImage");
+
+        if (!studentName || !studentId || !imageInput.files.length) {
+            resultText.innerText =
+                "Please enter all student information and choose an image.";
+            return;
+        }
 
         const formData = new FormData();
-        formData.append("student_name", document.getElementById("studentName").value);
-        formData.append("student_id", document.getElementById("studentId").value);
-        formData.append("image", document.getElementById("studentImage").files[0]);
+        formData.append("student_name", studentName);
+        formData.append("student_id", studentId);
+        formData.append("image", imageInput.files[0]);
+
+        resultText.innerText = "Registering student...";
+        registerButton.disabled = true;
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/register", {
+            const response = await fetch(`${API_BASE_URL}/register`, {
                 method: "POST",
                 body: formData
             });
 
             const data = await response.json();
 
-            if (data.success) {
-                resultText.innerText = "Student registered successfully.";
+            if (response.ok && data.success) {
+                resultText.innerText =
+                    "Student registered successfully.";
+
+                form.reset();
             } else {
-                resultText.innerText = "Error: " + data.error;
+                resultText.innerText =
+                    "Error: " +
+                    (data.error || "Student registration failed.");
             }
+
         } catch (error) {
+            console.log(error);
             resultText.innerText = "Request failed.";
+        } finally {
+            registerButton.disabled = false;
         }
     });
 </script>

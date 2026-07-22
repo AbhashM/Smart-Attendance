@@ -41,7 +41,7 @@
         <p id="result"></p>
     </div>
 </div>
-
+<script src="config.js"></script>
 <script>
     async function addAppearance() {
         const studentId = document.getElementById("studentId").value;
@@ -60,7 +60,7 @@
         formData.append("image", image);
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/add-appearance", {
+            const response = await fetch(`${API_BASE_URL}/add-appearance`, {
                 method: "POST",
                 body: formData
             });

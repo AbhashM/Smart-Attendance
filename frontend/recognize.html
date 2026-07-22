@@ -32,15 +32,19 @@
 
         <br><br>
 
-        <input type="file" id="testImage">
+        <input type="file" id="testImage" accept="image/*">
 
         <br><br>
 
-        <button id="recognizeBtn" type="button">Recognize & Mark Attendance</button>
+        <button id="recognizeBtn" type="button">
+            Recognize & Mark Attendance
+        </button>
 
         <p id="result">Waiting for input...</p>
     </div>
 </div>
+
+<script src="config.js"></script>
 
 <script>
     async function loadClasses() {
@@ -48,72 +52,98 @@
         select.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:5000/classes");
+            const response = await fetch(`${API_BASE_URL}/classes`);
             const data = await response.json();
 
-            if (!data.classes || data.classes.length === 0) {
-                select.innerHTML = "<option>No classes found</option>";
+            if (!response.ok || !data.classes || data.classes.length === 0) {
+                select.innerHTML =
+                    '<option value="">No classes found</option>';
                 return;
             }
 
             data.classes.forEach(cls => {
                 const option = document.createElement("option");
+
                 option.value = cls.id;
-                option.textContent = cls.course_code + " - " + cls.course_name;
+                option.textContent =
+                    cls.course_code + " - " + cls.course_name;
+
                 select.appendChild(option);
             });
 
         } catch (error) {
             console.log(error);
-            select.innerHTML = "<option>Failed to load classes</option>";
+
+            select.innerHTML =
+                '<option value="">Failed to load classes</option>';
         }
     }
 
-    document.getElementById("recognizeBtn").addEventListener("click", async function () {
-        const classId = document.getElementById("classSelect").value;
-        const fileInput = document.getElementById("testImage");
-        const resultText = document.getElementById("result");
+    document
+        .getElementById("recognizeBtn")
+        .addEventListener("click", async function () {
+            const classId =
+                document.getElementById("classSelect").value;
+            const fileInput =
+                document.getElementById("testImage");
+            const resultText =
+                document.getElementById("result");
+            const recognizeButton =
+                document.getElementById("recognizeBtn");
 
-        if (!classId || classId === "No classes found" || classId === "Failed to load classes") {
-            resultText.textContent = "Please select a valid class.";
-            return;
-        }
-
-        if (!fileInput.files.length) {
-            resultText.textContent = "Please choose an image first.";
-            return;
-        }
-
-        resultText.textContent = "Recognizing student...";
-
-        const formData = new FormData();
-        formData.append("class_id", classId);
-        formData.append("image", fileInput.files[0]);
-
-        try {
-            const response = await fetch("http://127.0.0.1:5000/recognize", {
-                method: "POST",
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
+            if (!classId) {
                 resultText.textContent =
-                    "Attendance marked for " +
-                    data.student_name +
-                    " (" + data.student_id + ") " +
-                    "as " + data.status +
-                    " at " + data.timestamp;
-            } else {
-                resultText.textContent = "Error: " + data.error;
+                    "Please select a valid class.";
+                return;
             }
 
-        } catch (error) {
-            console.log(error);
-            resultText.textContent = "Request failed.";
-        }
-    });
+            if (!fileInput.files.length) {
+                resultText.textContent =
+                    "Please choose an image first.";
+                return;
+            }
+
+            resultText.textContent = "Recognizing student...";
+            recognizeButton.disabled = true;
+
+            const formData = new FormData();
+            formData.append("class_id", classId);
+            formData.append("image", fileInput.files[0]);
+
+            try {
+                const response = await fetch(
+                    `${API_BASE_URL}/recognize`,
+                    {
+                        method: "POST",
+                        body: formData
+                    }
+                );
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    resultText.textContent =
+                        "Attendance marked for " +
+                        data.student_name +
+                        " (" +
+                        data.student_id +
+                        ") as " +
+                        data.status +
+                        " at " +
+                        data.timestamp;
+                } else {
+                    resultText.textContent =
+                        "Error: " +
+                        (data.error || "Recognition failed.");
+                }
+
+            } catch (error) {
+                console.log(error);
+                resultText.textContent = "Request failed.";
+            } finally {
+                recognizeButton.disabled = false;
+            }
+        });
 
     window.onload = loadClasses;
 </script>
