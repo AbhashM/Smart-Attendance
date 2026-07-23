@@ -1798,7 +1798,7 @@ def recognize_student():
                     img1_path=test_image,
                     img2_path=stored_image,
                     model_name="VGG-Face",
-                    detector_backend="opencv",
+                    detector_backend="skip",
                     enforce_detection=False,
                     silent=True,
                 )
