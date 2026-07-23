@@ -1770,6 +1770,13 @@ def recognize_student():
 
         deepface = get_deepface()
 
+        # Track the closest matching face across all students
+        best_match = None
+        best_distance = float("inf")
+
+        # Lower number = stricter matching
+        match_threshold = 0.40
+
         # Compare uploaded image with every registered appearance
         for student in students:
             student_name = student["student_name"]
@@ -1786,6 +1793,16 @@ def recognize_student():
                     blob_name
                 )
 
+                if stored_image is None:
+                    print(
+                        (
+                            f"Could not decode stored image "
+                            f"for {student_id}"
+                        ),
+                        flush=True,
+                    )
+                    continue
+
                 print(
                     (
                         f"Stored image shape for "
@@ -1799,112 +1816,33 @@ def recognize_student():
                     img2_path=stored_image,
                     model_name="VGG-Face",
                     detector_backend="mediapipe",
-                    enforce_detection=False,
+                    distance_metric="cosine",
+                    enforce_detection=True,
+                    align=True,
                     silent=True,
                 )
 
+                distance = float(result["distance"])
+
                 print(
                     (
-                        f"DeepFace result for "
-                        f"{student_id}: {result}"
+                        f"DeepFace result for {student_id}: "
+                        f"verified={result.get('verified')}, "
+                        f"distance={distance}, "
+                        f"default_threshold="
+                        f"{result.get('threshold')}"
                     ),
                     flush=True,
                 )
 
-                if not result.get("verified"):
-                    continue
-
-                current_time = datetime.now(
-                    timezone.utc
-                )
-
-                attendance_date = current_time.date()
-
-                with engine.begin() as connection:
-                    existing_record = connection.execute(
-                        text(
-                            """
-                            SELECT id
-                            FROM attendance
-                            WHERE class_id = :class_id
-                              AND student_id = :student_id
-                              AND CAST(timestamp AS DATE) =
-                                  :attendance_date
-                            LIMIT 1
-                            """
-                        ),
-                        {
-                            "class_id": class_id,
-                            "student_id": student_id,
-                            "attendance_date": attendance_date,
-                        },
-                    ).first()
-
-                    if existing_record:
-                        connection.execute(
-                            text(
-                                """
-                                UPDATE attendance
-                                SET
-                                    student_name = :student_name,
-                                    timestamp = :timestamp,
-                                    status = 'Present'
-                                WHERE id = :attendance_id
-                                """
-                            ),
-                            {
-                                "student_name": student_name,
-                                "timestamp": current_time,
-                                "attendance_id": (
-                                    existing_record[0]
-                                ),
-                            },
-                        )
-
-                    else:
-                        connection.execute(
-                            text(
-                                """
-                                INSERT INTO attendance
-                                    (
-                                        class_id,
-                                        student_id,
-                                        student_name,
-                                        timestamp,
-                                        status
-                                    )
-                                VALUES
-                                    (
-                                        :class_id,
-                                        :student_id,
-                                        :student_name,
-                                        :timestamp,
-                                        :status
-                                    )
-                                """
-                            ),
-                            {
-                                "class_id": class_id,
-                                "student_id": student_id,
-                                "student_name": student_name,
-                                "timestamp": current_time,
-                                "status": "Present",
-                            },
-                        )
-
-                return jsonify(
-                    {
-                        "success": True,
+                # Keep only the closest student
+                if distance < best_distance:
+                    best_distance = distance
+                    best_match = {
                         "student_name": student_name,
                         "student_id": student_id,
-                        "class_id": class_id,
-                        "attendance_marked": True,
-                        "status": "Present",
-                        "timestamp": (
-                            current_time.isoformat()
-                        ),
+                        "distance": distance,
                     }
-                ), 200
 
             except Exception as error:
                 print(
@@ -1916,16 +1854,125 @@ def recognize_student():
                 )
 
                 traceback.print_exc()
+                continue
+
+        print(
+            f"Best distance found: {best_distance}",
+            flush=True,
+        )
+
+        # Reject the photo if no valid face match was found
+        if (
+            best_match is None
+            or best_distance > match_threshold
+        ):
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "No matching student found "
+                        "in selected class"
+                    ),
+                    "best_distance": (
+                        None
+                        if best_match is None
+                        else round(best_distance, 4)
+                    ),
+                }
+            ), 404
+
+        # Use the closest accepted student
+        student_name = best_match["student_name"]
+        student_id = best_match["student_id"]
+
+        current_time = datetime.now(
+            timezone.utc
+        )
+
+        attendance_date = current_time.date()
+
+        with engine.begin() as connection:
+            existing_record = connection.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM attendance
+                    WHERE class_id = :class_id
+                      AND student_id = :student_id
+                      AND CAST(timestamp AS DATE) =
+                          :attendance_date
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "class_id": class_id,
+                    "student_id": student_id,
+                    "attendance_date": attendance_date,
+                },
+            ).first()
+
+            if existing_record:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE attendance
+                        SET
+                            student_name = :student_name,
+                            timestamp = :timestamp,
+                            status = 'Present'
+                        WHERE id = :attendance_id
+                        """
+                    ),
+                    {
+                        "student_name": student_name,
+                        "timestamp": current_time,
+                        "attendance_id": existing_record[0],
+                    },
+                )
+
+            else:
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO attendance
+                            (
+                                class_id,
+                                student_id,
+                                student_name,
+                                timestamp,
+                                status
+                            )
+                        VALUES
+                            (
+                                :class_id,
+                                :student_id,
+                                :student_name,
+                                :timestamp,
+                                :status
+                            )
+                        """
+                    ),
+                    {
+                        "class_id": class_id,
+                        "student_id": student_id,
+                        "student_name": student_name,
+                        "timestamp": current_time,
+                        "status": "Present",
+                    },
+                )
 
         return jsonify(
             {
-                "success": False,
-                "error": (
-                    "No matching student found "
-                    "in selected class"
-                ),
+                "success": True,
+                "student_name": student_name,
+                "student_id": student_id,
+                "class_id": class_id,
+                "attendance_marked": True,
+                "status": "Present",
+                "distance": round(best_distance, 4),
+                "timestamp": current_time.isoformat(),
             }
-        ), 404
+        ), 200
 
     except Exception as error:
         print(
@@ -1941,7 +1988,6 @@ def recognize_student():
                 "error": "Face recognition failed",
             }
         ), 500
-
 
 # ---------------------------------------------------------
 # Attendance
