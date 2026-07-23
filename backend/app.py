@@ -14,6 +14,8 @@ from datetime import (
 )
 
 import csv
+import numpy as np
+import traceback
 import io
 import os
 import tempfile
@@ -778,7 +780,29 @@ def delete_blob_if_exists(blob_name):
             ),
             flush=True,
         )
+def download_blob_as_image(blob_name):
+    blob_client = container_client.get_blob_client(
+        blob_name
+    )
 
+    blob_bytes = blob_client.download_blob().readall()
+
+    image_array = np.frombuffer(
+        blob_bytes,
+        np.uint8,
+    )
+
+    image = cv2.imdecode(
+        image_array,
+        cv2.IMREAD_COLOR,
+    )
+
+    if image is None:
+        raise ValueError(
+            f"Could not decode blob image: {blob_name}"
+        )
+
+    return image
 
 # ---------------------------------------------------------
 # API and health
@@ -1658,17 +1682,13 @@ def recognize_student():
             }
         ), 400
 
-    class_id = request.form.get(
-        "class_id"
-    )
+    class_id = request.form.get("class_id")
 
     if not class_id:
         return jsonify(
             {
                 "success": False,
-                "error": (
-                    "Please select a class"
-                ),
+                "error": "Please select a class",
             }
         ), 400
 
@@ -1683,28 +1703,35 @@ def recognize_student():
             }
         ), 400
 
-    uploaded_image = (
-        request.files["image"]
-    )
-
-    temporary_file = (
-        tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".jpg",
-        )
-    )
-
-    test_image_path = (
-        temporary_file.name
-    )
-
-    temporary_file.close()
-
-    uploaded_image.save(
-        test_image_path
-    )
-
     try:
+        # Read the newly uploaded recognition image
+        uploaded_image = request.files["image"]
+        uploaded_bytes = uploaded_image.read()
+
+        uploaded_array = np.frombuffer(
+            uploaded_bytes,
+            np.uint8,
+        )
+
+        test_image = cv2.imdecode(
+            uploaded_array,
+            cv2.IMREAD_COLOR,
+        )
+
+        if test_image is None:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Uploaded image could not be read",
+                }
+            ), 400
+
+        print(
+            f"Uploaded image shape: {test_image.shape}",
+            flush=True,
+        )
+
+        # Load students enrolled in the selected class
         with engine.connect() as connection:
             students = connection.execute(
                 text(
@@ -1734,195 +1761,160 @@ def recognize_student():
                 {
                     "success": False,
                     "error": (
-                        "No student appearance "
-                        "profiles found for this class"
+                        "No student appearance profiles "
+                        "found for this class"
                     ),
                 }
             ), 400
 
         deepface = get_deepface()
 
+        # Compare uploaded image with every registered appearance
         for student in students:
-            student_name = (
-                student["student_name"]
-            )
-
-            student_id = (
-                student["student_id"]
-            )
-
-            blob_name = (
-                student["image_path"]
-            )
-
-            stored_image_path = None
+            student_name = student["student_name"]
+            student_id = student["student_id"]
+            blob_name = student["image_path"]
 
             try:
-                stored_image_path = (
-                    download_blob_to_temp(
-                        blob_name
-                    )
+                print(
+                    f"Checking blob: {blob_name}",
+                    flush=True,
                 )
 
-                result = deepface.verify(
-                    img1_path=test_image_path,
-                    img2_path=stored_image_path,
-                    enforce_detection=False,
+                stored_image = download_blob_as_image(
+                    blob_name
                 )
 
                 print(
                     (
-                        "DeepFace result for "
+                        f"Stored image shape for "
+                        f"{student_id}: {stored_image.shape}"
+                    ),
+                    flush=True,
+                )
+
+                result = deepface.verify(
+                    img1_path=test_image,
+                    img2_path=stored_image,
+                    model_name="VGG-Face",
+                    detector_backend="opencv",
+                    enforce_detection=False,
+                    silent=True,
+                )
+
+                print(
+                    (
+                        f"DeepFace result for "
                         f"{student_id}: {result}"
                     ),
                     flush=True,
                 )
 
-                if result.get("verified"):
-                    current_time = datetime.now(
-                        timezone.utc
-                    )
+                if not result.get("verified"):
+                    continue
 
-                    attendance_date = (
-                        current_time.date()
-                    )
+                current_time = datetime.now(
+                    timezone.utc
+                )
 
-                    with engine.begin() as connection:
-                        existing_record = (
-                            connection.execute(
-                                text(
-                                    """
-                                    SELECT id
-                                    FROM attendance
-                                    WHERE class_id =
-                                          :class_id
-                                      AND student_id =
-                                          :student_id
-                                      AND CAST(
-                                          timestamp AS DATE
-                                      ) =
-                                          :attendance_date
-                                    LIMIT 1
-                                    """
+                attendance_date = current_time.date()
+
+                with engine.begin() as connection:
+                    existing_record = connection.execute(
+                        text(
+                            """
+                            SELECT id
+                            FROM attendance
+                            WHERE class_id = :class_id
+                              AND student_id = :student_id
+                              AND CAST(timestamp AS DATE) =
+                                  :attendance_date
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "class_id": class_id,
+                            "student_id": student_id,
+                            "attendance_date": attendance_date,
+                        },
+                    ).first()
+
+                    if existing_record:
+                        connection.execute(
+                            text(
+                                """
+                                UPDATE attendance
+                                SET
+                                    student_name = :student_name,
+                                    timestamp = :timestamp,
+                                    status = 'Present'
+                                WHERE id = :attendance_id
+                                """
+                            ),
+                            {
+                                "student_name": student_name,
+                                "timestamp": current_time,
+                                "attendance_id": (
+                                    existing_record[0]
                                 ),
-                                {
-                                    "class_id": (
-                                        class_id
-                                    ),
-                                    "student_id": (
-                                        student_id
-                                    ),
-                                    "attendance_date": (
-                                        attendance_date
-                                    ),
-                                },
-                            ).first()
+                            },
                         )
 
-                        if existing_record:
-                            connection.execute(
-                                text(
-                                    """
-                                    UPDATE attendance
-                                    SET
-                                        student_name =
-                                            :student_name,
-                                        timestamp =
-                                            :timestamp,
-                                        status =
-                                            'Present'
-                                    WHERE id =
-                                          :attendance_id
-                                    """
-                                ),
-                                {
-                                    "student_name": (
-                                        student_name
-                                    ),
-                                    "timestamp": (
-                                        current_time
-                                    ),
-                                    "attendance_id": (
-                                        existing_record[0]
-                                    ),
-                                },
-                            )
+                    else:
+                        connection.execute(
+                            text(
+                                """
+                                INSERT INTO attendance
+                                    (
+                                        class_id,
+                                        student_id,
+                                        student_name,
+                                        timestamp,
+                                        status
+                                    )
+                                VALUES
+                                    (
+                                        :class_id,
+                                        :student_id,
+                                        :student_name,
+                                        :timestamp,
+                                        :status
+                                    )
+                                """
+                            ),
+                            {
+                                "class_id": class_id,
+                                "student_id": student_id,
+                                "student_name": student_name,
+                                "timestamp": current_time,
+                                "status": "Present",
+                            },
+                        )
 
-                        else:
-                            connection.execute(
-                                text(
-                                    """
-                                    INSERT INTO attendance
-                                        (
-                                            class_id,
-                                            student_id,
-                                            student_name,
-                                            timestamp,
-                                            status
-                                        )
-                                    VALUES
-                                        (
-                                            :class_id,
-                                            :student_id,
-                                            :student_name,
-                                            :timestamp,
-                                            :status
-                                        )
-                                    """
-                                ),
-                                {
-                                    "class_id": (
-                                        class_id
-                                    ),
-                                    "student_id": (
-                                        student_id
-                                    ),
-                                    "student_name": (
-                                        student_name
-                                    ),
-                                    "timestamp": (
-                                        current_time
-                                    ),
-                                    "status": (
-                                        "Present"
-                                    ),
-                                },
-                            )
-
-                    return jsonify(
-                        {
-                            "success": True,
-                            "student_name": (
-                                student_name
-                            ),
-                            "student_id": (
-                                student_id
-                            ),
-                            "class_id": class_id,
-                            "attendance_marked": (
-                                True
-                            ),
-                            "status": "Present",
-                            "timestamp": (
-                                current_time
-                                .isoformat()
-                            ),
-                        }
-                    ), 200
+                return jsonify(
+                    {
+                        "success": True,
+                        "student_name": student_name,
+                        "student_id": student_id,
+                        "class_id": class_id,
+                        "attendance_marked": True,
+                        "status": "Present",
+                        "timestamp": (
+                            current_time.isoformat()
+                        ),
+                    }
+                ), 200
 
             except Exception as error:
                 print(
                     (
-                        "Recognition error for "
-                        f"{student_id}: {error}"
+                        f"Recognition error for "
+                        f"{student_id}: {repr(error)}"
                     ),
                     flush=True,
                 )
 
-            finally:
-                safe_remove(
-                    stored_image_path
-                )
+                traceback.print_exc()
 
         return jsonify(
             {
@@ -1936,23 +1928,18 @@ def recognize_student():
 
     except Exception as error:
         print(
-            f"Recognition error: {error}",
+            f"Recognition route error: {repr(error)}",
             flush=True,
         )
+
+        traceback.print_exc()
 
         return jsonify(
             {
                 "success": False,
-                "error": (
-                    "Face recognition failed"
-                ),
+                "error": "Face recognition failed",
             }
         ), 500
-
-    finally:
-        safe_remove(
-            test_image_path
-        )
 
 
 # ---------------------------------------------------------
