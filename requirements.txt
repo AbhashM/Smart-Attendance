@@ -8,3 +8,5 @@ psycopg2-binary
 protobuf==4.25.3
 SQLAlchemy>=2.0
 psycopg[binary]>=3.1
+azure-storage-blob
+azure-core

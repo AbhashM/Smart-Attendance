@@ -1,11 +1,30 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import (
+    Flask,
+    jsonify,
+    request,
+    send_from_directory,
+)
 from flask_cors import CORS
-from datetime import date, datetime, time, timezone
+
+from datetime import (
+    date,
+    datetime,
+    time,
+    timezone,
+)
+
 import csv
 import io
 import os
 import tempfile
 import threading
+import uuid
+
+from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import (
+    BlobServiceClient,
+    ContentSettings,
+)
 
 from sqlalchemy import (
     Column,
@@ -21,8 +40,12 @@ from sqlalchemy import (
     create_engine,
     text,
 )
+
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import (
+    IntegrityError,
+    SQLAlchemyError,
+)
 
 
 app = Flask(__name__)
@@ -32,34 +55,49 @@ CORS(app)
 # ---------------------------------------------------------
 # Project paths
 # ---------------------------------------------------------
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+BACKEND_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
-FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
-UPLOAD_FOLDER = os.path.join(BACKEND_DIR, "uploads")
+PROJECT_ROOT = os.path.dirname(
+    BACKEND_DIR
+)
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+FRONTEND_DIR = os.path.join(
+    PROJECT_ROOT,
+    "frontend",
+)
 
 
 # ---------------------------------------------------------
 # PostgreSQL configuration
 # ---------------------------------------------------------
 def build_database_url():
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = os.environ.get(
+        "DATABASE_URL"
+    )
 
     if database_url:
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace(
-                "postgres://",
-                "postgresql+psycopg://",
-                1,
+        if database_url.startswith(
+            "postgres://"
+        ):
+            database_url = (
+                database_url.replace(
+                    "postgres://",
+                    "postgresql+psycopg://",
+                    1,
+                )
             )
 
-        elif database_url.startswith("postgresql://"):
-            database_url = database_url.replace(
-                "postgresql://",
-                "postgresql+psycopg://",
-                1,
+        elif database_url.startswith(
+            "postgresql://"
+        ):
+            database_url = (
+                database_url.replace(
+                    "postgresql://",
+                    "postgresql+psycopg://",
+                    1,
+                )
             )
 
         return database_url
@@ -88,7 +126,12 @@ def build_database_url():
         username=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
         host=os.environ["DB_HOST"],
-        port=int(os.environ.get("DB_PORT", "5432")),
+        port=int(
+            os.environ.get(
+                "DB_PORT",
+                "5432",
+            )
+        ),
         database=os.environ["DB_NAME"],
         query={
             "sslmode": os.environ.get(
@@ -107,6 +150,48 @@ engine = create_engine(
 
 
 # ---------------------------------------------------------
+# Azure Blob Storage configuration
+# ---------------------------------------------------------
+AZURE_STORAGE_CONNECTION_STRING = (
+    os.environ.get(
+        "AZURE_STORAGE_CONNECTION_STRING"
+    )
+)
+
+AZURE_STORAGE_CONTAINER = (
+    os.environ.get(
+        "AZURE_STORAGE_CONTAINER",
+        "face-images",
+    )
+)
+
+if not AZURE_STORAGE_CONNECTION_STRING:
+    raise RuntimeError(
+        "AZURE_STORAGE_CONNECTION_STRING "
+        "is missing"
+    )
+
+
+blob_service_client = (
+    BlobServiceClient.from_connection_string(
+        AZURE_STORAGE_CONNECTION_STRING
+    )
+)
+
+container_client = (
+    blob_service_client.get_container_client(
+        AZURE_STORAGE_CONTAINER
+    )
+)
+
+try:
+    container_client.create_container()
+
+except ResourceExistsError:
+    pass
+
+
+# ---------------------------------------------------------
 # Database schema
 # ---------------------------------------------------------
 metadata = MetaData()
@@ -115,16 +200,19 @@ metadata = MetaData()
 students_table = Table(
     "students",
     metadata,
+
     Column(
         "student_id",
         String(100),
         primary_key=True,
     ),
+
     Column(
         "student_name",
         String(255),
         nullable=False,
     ),
+
     Column(
         "image_path",
         Text,
@@ -136,35 +224,45 @@ students_table = Table(
 student_images_table = Table(
     "student_images",
     metadata,
+
     Column(
         "id",
         Integer,
         primary_key=True,
     ),
+
     Column(
         "student_id",
         String(100),
+
         ForeignKey(
             "students.student_id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "image_path",
         Text,
         nullable=False,
     ),
+
     Column(
         "appearance_label",
         String(255),
         nullable=False,
     ),
+
     Column(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+
+        server_default=text(
+            "CURRENT_TIMESTAMP"
+        ),
     ),
 )
 
@@ -172,22 +270,26 @@ student_images_table = Table(
 classes_table = Table(
     "classes",
     metadata,
+
     Column(
         "id",
         Integer,
         primary_key=True,
     ),
+
     Column(
         "course_name",
         String(255),
         nullable=False,
     ),
+
     Column(
         "course_code",
         String(100),
         nullable=False,
         unique=True,
     ),
+
     Column(
         "professor_name",
         String(255),
@@ -199,22 +301,28 @@ classes_table = Table(
 class_students_table = Table(
     "class_students",
     metadata,
+
     Column(
         "class_id",
         Integer,
+
         ForeignKey(
             "classes.id",
             ondelete="CASCADE",
         ),
+
         primary_key=True,
     ),
+
     Column(
         "student_id",
         String(100),
+
         ForeignKey(
             "students.student_id",
             ondelete="CASCADE",
         ),
+
         primary_key=True,
     ),
 )
@@ -223,45 +331,61 @@ class_students_table = Table(
 attendance_table = Table(
     "attendance",
     metadata,
+
     Column(
         "id",
         Integer,
         primary_key=True,
     ),
+
     Column(
         "class_id",
         Integer,
+
         ForeignKey(
             "classes.id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "student_id",
         String(100),
+
         ForeignKey(
             "students.student_id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "student_name",
         String(255),
         nullable=False,
     ),
+
     Column(
         "timestamp",
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+
+        server_default=text(
+            "CURRENT_TIMESTAMP"
+        ),
     ),
+
     Column(
         "status",
         String(50),
         nullable=False,
-        server_default=text("'Present'"),
+
+        server_default=text(
+            "'Present'"
+        ),
     ),
 )
 
@@ -269,50 +393,64 @@ attendance_table = Table(
 attendance_policies_table = Table(
     "attendance_policies",
     metadata,
+
     Column(
         "id",
         Integer,
         primary_key=True,
     ),
+
     Column(
         "class_id",
         Integer,
+
         ForeignKey(
             "classes.id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "policy_name",
         String(255),
         nullable=False,
     ),
+
     Column(
         "absence_limit",
         Integer,
     ),
+
     Column(
         "late_limit",
         Integer,
     ),
+
     Column(
         "late_minutes",
         Integer,
     ),
+
     Column(
         "attendance_weight",
         Float,
     ),
+
     Column(
         "consequence",
         Text,
     ),
+
     Column(
         "excuse_counts",
         String(20),
         nullable=False,
-        server_default=text("'No'"),
+
+        server_default=text(
+            "'No'"
+        ),
     ),
 )
 
@@ -320,50 +458,67 @@ attendance_policies_table = Table(
 excuses_table = Table(
     "excuses",
     metadata,
+
     Column(
         "id",
         Integer,
         primary_key=True,
     ),
+
     Column(
         "student_id",
         String(100),
+
         ForeignKey(
             "students.student_id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "class_id",
         Integer,
+
         ForeignKey(
             "classes.id",
             ondelete="CASCADE",
         ),
+
         nullable=False,
     ),
+
     Column(
         "excuse_date",
         Date,
         nullable=False,
     ),
+
     Column(
         "reason",
         Text,
         nullable=False,
     ),
+
     Column(
         "status",
         String(50),
         nullable=False,
-        server_default=text("'Pending'"),
+
+        server_default=text(
+            "'Pending'"
+        ),
     ),
+
     Column(
         "submitted_at",
         DateTime(timezone=True),
         nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
+
+        server_default=text(
+            "CURRENT_TIMESTAMP"
+        ),
     ),
 )
 
@@ -409,21 +564,25 @@ def get_face_detector():
         with _ai_lock:
             if _face_detector is None:
                 print(
-                    "Loading MediaPipe face detector...",
+                    "Loading MediaPipe "
+                    "face detector...",
                     flush=True,
                 )
 
                 import mediapipe as mp
 
                 _face_detector = (
-                    mp.solutions.face_detection.FaceDetection(
+                    mp.solutions
+                    .face_detection
+                    .FaceDetection(
                         model_selection=0,
                         min_detection_confidence=0.5,
                     )
                 )
 
                 print(
-                    "MediaPipe face detector loaded.",
+                    "MediaPipe face detector "
+                    "loaded.",
                     flush=True,
                 )
 
@@ -431,7 +590,7 @@ def get_face_detector():
 
 
 # ---------------------------------------------------------
-# Helpers
+# Helper functions
 # ---------------------------------------------------------
 def safe_remove(path):
     try:
@@ -440,7 +599,7 @@ def safe_remove(path):
 
     except OSError as error:
         print(
-            f"Could not remove file {path}: {error}",
+            f"Could not remove {path}: {error}",
             flush=True,
         )
 
@@ -449,26 +608,41 @@ def parse_date(value):
     try:
         return date.fromisoformat(value)
 
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
 def optional_int(value):
-    if value is None or str(value).strip() == "":
+    if (
+        value is None
+        or str(value).strip() == ""
+    ):
         return None
 
     return int(value)
 
 
 def optional_float(value):
-    if value is None or str(value).strip() == "":
+    if (
+        value is None
+        or str(value).strip() == ""
+    ):
         return None
 
     return float(value)
 
 
 def serialize_value(value):
-    if isinstance(value, (date, datetime)):
+    if isinstance(
+        value,
+        (
+            date,
+            datetime,
+        ),
+    ):
         return value.isoformat()
 
     return value
@@ -481,35 +655,176 @@ def serialize_row(row):
     }
 
 
+def sanitize_label(value):
+    return "".join(
+        character
+        if (
+            character.isalnum()
+            or character in "-_"
+        )
+        else "_"
+        for character in value
+    )
+
+
+def upload_face_image(
+    image_file,
+    student_id,
+    appearance_label,
+):
+    original_filename = os.path.basename(
+        image_file.filename
+        or "image.jpg"
+    )
+
+    extension = os.path.splitext(
+        original_filename
+    )[1].lower()
+
+    if not extension:
+        extension = ".jpg"
+
+    safe_label = sanitize_label(
+        appearance_label
+    )
+
+    blob_name = (
+        f"{student_id}/"
+        f"{safe_label}/"
+        f"{uuid.uuid4().hex}"
+        f"{extension}"
+    )
+
+    image_file.stream.seek(0)
+
+    blob_client = (
+        container_client.get_blob_client(
+            blob_name
+        )
+    )
+
+    blob_client.upload_blob(
+        image_file.stream,
+        overwrite=True,
+
+        content_settings=ContentSettings(
+            content_type=(
+                image_file.content_type
+                or "image/jpeg"
+            )
+        ),
+    )
+
+    return blob_name
+
+
+def download_blob_to_temp(blob_name):
+    extension = os.path.splitext(
+        blob_name
+    )[1]
+
+    temporary_file = (
+        tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=extension or ".jpg",
+        )
+    )
+
+    temporary_path = temporary_file.name
+
+    try:
+        blob_client = (
+            container_client.get_blob_client(
+                blob_name
+            )
+        )
+
+        blob_data = (
+            blob_client.download_blob()
+        )
+
+        temporary_file.write(
+            blob_data.readall()
+        )
+
+        temporary_file.close()
+
+        return temporary_path
+
+    except Exception:
+        temporary_file.close()
+
+        safe_remove(
+            temporary_path
+        )
+
+        raise
+
+
+def delete_blob_if_exists(blob_name):
+    if not blob_name:
+        return
+
+    try:
+        container_client.delete_blob(
+            blob_name
+        )
+
+    except Exception as error:
+        print(
+            (
+                "Could not delete blob "
+                f"{blob_name}: {error}"
+            ),
+            flush=True,
+        )
+
+
 # ---------------------------------------------------------
-# Health routes
+# API and health
 # ---------------------------------------------------------
-@app.route("/api", methods=["GET"])
+@app.route(
+    "/api",
+    methods=["GET"],
+)
 def home():
     return jsonify(
         {
             "status": "running",
-            "service": "Smart Attendance Backend",
+            "service": (
+                "Smart Attendance Backend"
+            ),
             "database": "PostgreSQL",
+            "image_storage": (
+                "Azure Blob Storage"
+            ),
         }
     ), 200
 
 
-@app.route("/health", methods=["GET"])
+@app.route(
+    "/health",
+    methods=["GET"],
+)
 def health():
     try:
         with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
+            connection.execute(
+                text("SELECT 1")
+            )
+
+        container_client.get_container_properties()
 
         return jsonify(
             {
                 "success": True,
                 "status": "healthy",
                 "database": "connected",
+                "blob_storage": "connected",
             }
         ), 200
 
-    except SQLAlchemyError as error:
+    except Exception as error:
         print(
             f"Health check error: {error}",
             flush=True,
@@ -519,7 +834,7 @@ def health():
             {
                 "success": False,
                 "status": "unhealthy",
-                "database": "disconnected",
+                "error": str(error),
             }
         ), 503
 
@@ -527,7 +842,10 @@ def health():
 # ---------------------------------------------------------
 # Face detection
 # ---------------------------------------------------------
-@app.route("/detect", methods=["POST"])
+@app.route(
+    "/detect",
+    methods=["POST"],
+)
 def detect_face():
     if "image" not in request.files:
         return jsonify(
@@ -541,9 +859,13 @@ def detect_face():
         import cv2
         import numpy as np
 
-        uploaded_file = request.files["image"]
+        uploaded_file = (
+            request.files["image"]
+        )
 
-        image_bytes = uploaded_file.read()
+        image_bytes = (
+            uploaded_file.read()
+        )
 
         numpy_image = np.frombuffer(
             image_bytes,
@@ -559,7 +881,9 @@ def detect_face():
             return jsonify(
                 {
                     "success": False,
-                    "error": "Invalid image file",
+                    "error": (
+                        "Invalid image file"
+                    ),
                 }
             ), 400
 
@@ -569,7 +893,10 @@ def detect_face():
         )
 
         detector = get_face_detector()
-        results = detector.process(rgb_image)
+
+        results = detector.process(
+            rgb_image
+        )
 
         return jsonify(
             {
@@ -582,22 +909,30 @@ def detect_face():
 
     except Exception as error:
         print(
-            f"Face detection error: {error}",
+            (
+                "Face detection error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Face detection failed",
+                "error": (
+                    "Face detection failed"
+                ),
             }
         ), 500
 
 
 # ---------------------------------------------------------
-# Student registration
+# Register student
 # ---------------------------------------------------------
-@app.route("/register", methods=["POST"])
+@app.route(
+    "/register",
+    methods=["POST"],
+)
 def register_student():
     student_name = request.form.get(
         "student_name"
@@ -607,7 +942,9 @@ def register_student():
         "student_id"
     )
 
-    image = request.files.get("image")
+    image = request.files.get(
+        "image"
+    )
 
     if (
         not student_name
@@ -617,27 +954,21 @@ def register_student():
         return jsonify(
             {
                 "success": False,
-                "error": "Missing required fields",
+                "error": (
+                    "Missing required fields"
+                ),
             }
         ), 400
 
-    original_filename = os.path.basename(
-        image.filename or "image.jpg"
-    )
-
-    filename = (
-        f"{student_id}_Default_"
-        f"{original_filename}"
-    )
-
-    image_path = os.path.join(
-        UPLOAD_FOLDER,
-        filename,
-    )
-
-    image.save(image_path)
+    blob_name = None
 
     try:
+        blob_name = upload_face_image(
+            image,
+            student_id,
+            "Default",
+        )
+
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -657,9 +988,11 @@ def register_student():
                     """
                 ),
                 {
-                    "student_name": student_name,
+                    "student_name": (
+                        student_name
+                    ),
                     "student_id": student_id,
-                    "image_path": image_path,
+                    "image_path": blob_name,
                 },
             )
 
@@ -682,29 +1015,38 @@ def register_student():
                 ),
                 {
                     "student_id": student_id,
-                    "image_path": image_path,
-                    "appearance_label": "Default",
+                    "image_path": blob_name,
+                    "appearance_label": (
+                        "Default"
+                    ),
                 },
             )
 
         return jsonify(
             {
                 "success": True,
+                "image_blob": blob_name,
             }
         ), 201
 
     except IntegrityError:
-        safe_remove(image_path)
+        delete_blob_if_exists(
+            blob_name
+        )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Student ID already exists",
+                "error": (
+                    "Student ID already exists"
+                ),
             }
         ), 400
 
-    except SQLAlchemyError as error:
-        safe_remove(image_path)
+    except Exception as error:
+        delete_blob_if_exists(
+            blob_name
+        )
 
         print(
             f"Registration error: {error}",
@@ -714,7 +1056,9 @@ def register_student():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not register student",
+                "error": (
+                    "Could not register student"
+                ),
             }
         ), 500
 
@@ -722,37 +1066,47 @@ def register_student():
 # ---------------------------------------------------------
 # Alternate appearances
 # ---------------------------------------------------------
-@app.route("/add-appearance", methods=["POST"])
+@app.route(
+    "/add-appearance",
+    methods=["POST"],
+)
 def add_appearance():
     student_id = request.form.get(
         "student_id"
     )
 
     appearance_label = (
-        request.form.get("appearance_label")
+        request.form.get(
+            "appearance_label"
+        )
         or "Alternate"
     )
 
-    image = request.files.get("image")
+    image = request.files.get(
+        "image"
+    )
 
     if not student_id or not image:
         return jsonify(
             {
                 "success": False,
-                "error": "Missing student ID or image",
+                "error": (
+                    "Missing student ID or image"
+                ),
             }
         ), 400
 
-    image_path = None
+    blob_name = None
 
     try:
-        with engine.begin() as connection:
+        with engine.connect() as connection:
             student = connection.execute(
                 text(
                     """
                     SELECT student_id
                     FROM students
-                    WHERE student_id = :student_id
+                    WHERE student_id =
+                          :student_id
                     """
                 ),
                 {
@@ -760,41 +1114,23 @@ def add_appearance():
                 },
             ).first()
 
-            if not student:
-                return jsonify(
-                    {
-                        "success": False,
-                        "error": "Student not found",
-                    }
-                ), 404
+        if not student:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Student not found"
+                    ),
+                }
+            ), 404
 
-            safe_label = "".join(
-                character
-                if (
-                    character.isalnum()
-                    or character in "-_"
-                )
-                else "_"
-                for character in appearance_label
-            )
+        blob_name = upload_face_image(
+            image,
+            student_id,
+            appearance_label,
+        )
 
-            original_filename = os.path.basename(
-                image.filename or "image.jpg"
-            )
-
-            filename = (
-                f"{student_id}_"
-                f"{safe_label}_"
-                f"{original_filename}"
-            )
-
-            image_path = os.path.join(
-                UPLOAD_FOLDER,
-                filename,
-            )
-
-            image.save(image_path)
-
+        with engine.begin() as connection:
             connection.execute(
                 text(
                     """
@@ -814,29 +1150,39 @@ def add_appearance():
                 ),
                 {
                     "student_id": student_id,
-                    "image_path": image_path,
-                    "appearance_label": appearance_label,
+                    "image_path": blob_name,
+                    "appearance_label": (
+                        appearance_label
+                    ),
                 },
             )
 
         return jsonify(
             {
                 "success": True,
+                "image_blob": blob_name,
             }
         ), 201
 
-    except SQLAlchemyError as error:
-        safe_remove(image_path)
+    except Exception as error:
+        delete_blob_if_exists(
+            blob_name
+        )
 
         print(
-            f"Add appearance error: {error}",
+            (
+                "Add appearance error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not add appearance",
+                "error": (
+                    "Could not add appearance"
+                ),
             }
         ), 500
 
@@ -844,7 +1190,10 @@ def add_appearance():
 # ---------------------------------------------------------
 # Students
 # ---------------------------------------------------------
-@app.route("/students", methods=["GET"])
+@app.route(
+    "/students",
+    methods=["GET"],
+)
 def get_students():
     try:
         with engine.connect() as connection:
@@ -879,7 +1228,9 @@ def get_students():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load students",
+                "error": (
+                    "Could not load students"
+                ),
             }
         ), 500
 
@@ -887,17 +1238,25 @@ def get_students():
 # ---------------------------------------------------------
 # Classes
 # ---------------------------------------------------------
-@app.route("/classes", methods=["POST"])
+@app.route(
+    "/classes",
+    methods=["POST"],
+)
 def create_class():
-    course_name = request.form.get(
+    data = (
+        request.get_json(silent=True)
+        or request.form
+    )
+
+    course_name = data.get(
         "course_name"
     )
 
-    course_code = request.form.get(
+    course_code = data.get(
         "course_code"
     )
 
-    professor_name = request.form.get(
+    professor_name = data.get(
         "professor_name"
     )
 
@@ -909,7 +1268,9 @@ def create_class():
         return jsonify(
             {
                 "success": False,
-                "error": "Missing required fields",
+                "error": (
+                    "Missing required fields"
+                ),
             }
         ), 400
 
@@ -936,7 +1297,9 @@ def create_class():
                 {
                     "course_name": course_name,
                     "course_code": course_code,
-                    "professor_name": professor_name,
+                    "professor_name": (
+                        professor_name
+                    ),
                 },
             ).scalar_one()
 
@@ -951,7 +1314,9 @@ def create_class():
         return jsonify(
             {
                 "success": False,
-                "error": "Course code already exists",
+                "error": (
+                    "Course code already exists"
+                ),
             }
         ), 400
 
@@ -964,12 +1329,17 @@ def create_class():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not create class",
+                "error": (
+                    "Could not create class"
+                ),
             }
         ), 500
 
 
-@app.route("/classes", methods=["GET"])
+@app.route(
+    "/classes",
+    methods=["GET"],
+)
 def get_classes():
     try:
         with engine.connect() as connection:
@@ -1006,18 +1376,33 @@ def get_classes():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load classes",
+                "error": (
+                    "Could not load classes"
+                ),
             }
         ), 500
 
 
 # ---------------------------------------------------------
-# Class enrollment
+# Class students
 # ---------------------------------------------------------
-@app.route("/class-students", methods=["POST"])
+@app.route(
+    "/class-students",
+    methods=["POST"],
+)
 def add_student_to_class():
-    class_id = request.form.get("class_id")
-    student_id = request.form.get("student_id")
+    data = (
+        request.get_json(silent=True)
+        or request.form
+    )
+
+    class_id = data.get(
+        "class_id"
+    )
+
+    student_id = data.get(
+        "student_id"
+    )
 
     if not class_id or not student_id:
         return jsonify(
@@ -1059,28 +1444,37 @@ def add_student_to_class():
                 return jsonify(
                     {
                         "success": False,
-                        "error": "Class not found",
+                        "error": (
+                            "Class not found"
+                        ),
                     }
                 ), 404
 
-            student_exists = connection.execute(
-                text(
-                    """
-                    SELECT student_id
-                    FROM students
-                    WHERE student_id = :student_id
-                    """
-                ),
-                {
-                    "student_id": student_id,
-                },
-            ).first()
+            student_exists = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT student_id
+                        FROM students
+                        WHERE student_id =
+                              :student_id
+                        """
+                    ),
+                    {
+                        "student_id": (
+                            student_id
+                        ),
+                    },
+                ).first()
+            )
 
             if not student_exists:
                 return jsonify(
                     {
                         "success": False,
-                        "error": "Student not found",
+                        "error": (
+                            "Student not found"
+                        ),
                     }
                 ), 404
 
@@ -1131,7 +1525,9 @@ def add_student_to_class():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not enroll student",
+                "error": (
+                    "Could not enroll student"
+                ),
             }
         ), 500
 
@@ -1155,7 +1551,8 @@ def get_class_students(class_id):
                            students.student_id
                     WHERE class_students.class_id =
                           :class_id
-                    ORDER BY students.student_name ASC
+                    ORDER BY
+                        students.student_name ASC
                     """
                 ),
                 {
@@ -1175,20 +1572,28 @@ def get_class_students(class_id):
 
     except SQLAlchemyError as error:
         print(
-            f"Get class students error: {error}",
+            (
+                "Get class students error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load class students",
+                "error": (
+                    "Could not load class students"
+                ),
             }
         ), 500
 
 
 @app.route(
-    "/class-students/<int:class_id>/<student_id>",
+    (
+        "/class-students/"
+        "<int:class_id>/<student_id>"
+    ),
     methods=["DELETE"],
 )
 def remove_student_from_class(
@@ -1202,7 +1607,8 @@ def remove_student_from_class(
                     """
                     DELETE FROM class_students
                     WHERE class_id = :class_id
-                      AND student_id = :student_id
+                      AND student_id =
+                          :student_id
                     """
                 ),
                 {
@@ -1214,7 +1620,9 @@ def remove_student_from_class(
         return jsonify(
             {
                 "success": True,
-                "removed": result.rowcount > 0,
+                "removed": (
+                    result.rowcount > 0
+                ),
             }
         ), 200
 
@@ -1227,7 +1635,9 @@ def remove_student_from_class(
         return jsonify(
             {
                 "success": False,
-                "error": "Could not remove student",
+                "error": (
+                    "Could not remove student"
+                ),
             }
         ), 500
 
@@ -1235,7 +1645,10 @@ def remove_student_from_class(
 # ---------------------------------------------------------
 # Face recognition
 # ---------------------------------------------------------
-@app.route("/recognize", methods=["POST"])
+@app.route(
+    "/recognize",
+    methods=["POST"],
+)
 def recognize_student():
     if "image" not in request.files:
         return jsonify(
@@ -1245,13 +1658,17 @@ def recognize_student():
             }
         ), 400
 
-    class_id = request.form.get("class_id")
+    class_id = request.form.get(
+        "class_id"
+    )
 
     if not class_id:
         return jsonify(
             {
                 "success": False,
-                "error": "Please select a class",
+                "error": (
+                    "Please select a class"
+                ),
             }
         ), 400
 
@@ -1266,17 +1683,26 @@ def recognize_student():
             }
         ), 400
 
-    image = request.files["image"]
-
-    temporary_file = tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".jpg",
+    uploaded_image = (
+        request.files["image"]
     )
 
-    test_image_path = temporary_file.name
+    temporary_file = (
+        tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".jpg",
+        )
+    )
+
+    test_image_path = (
+        temporary_file.name
+    )
+
     temporary_file.close()
 
-    image.save(test_image_path)
+    uploaded_image.save(
+        test_image_path
+    )
 
     try:
         with engine.connect() as connection:
@@ -1308,8 +1734,8 @@ def recognize_student():
                 {
                     "success": False,
                     "error": (
-                        "No student appearance profiles "
-                        "found for this class"
+                        "No student appearance "
+                        "profiles found for this class"
                     ),
                 }
             ), 400
@@ -1317,23 +1743,39 @@ def recognize_student():
         deepface = get_deepface()
 
         for student in students:
-            student_name = student["student_name"]
-            student_id = student["student_id"]
-            image_path = student["image_path"]
+            student_name = (
+                student["student_name"]
+            )
 
-            if not os.path.exists(image_path):
-                print(
-                    "Missing registered image:",
-                    image_path,
-                    flush=True,
-                )
-                continue
+            student_id = (
+                student["student_id"]
+            )
+
+            blob_name = (
+                student["image_path"]
+            )
+
+            stored_image_path = None
 
             try:
+                stored_image_path = (
+                    download_blob_to_temp(
+                        blob_name
+                    )
+                )
+
                 result = deepface.verify(
                     img1_path=test_image_path,
-                    img2_path=image_path,
+                    img2_path=stored_image_path,
                     enforce_detection=False,
+                )
+
+                print(
+                    (
+                        "DeepFace result for "
+                        f"{student_id}: {result}"
+                    ),
+                    flush=True,
                 )
 
                 if result.get("verified"):
@@ -1358,13 +1800,18 @@ def recognize_student():
                                           :student_id
                                       AND CAST(
                                           timestamp AS DATE
-                                      ) = :attendance_date
+                                      ) =
+                                          :attendance_date
                                     LIMIT 1
                                     """
                                 ),
                                 {
-                                    "class_id": class_id,
-                                    "student_id": student_id,
+                                    "class_id": (
+                                        class_id
+                                    ),
+                                    "student_id": (
+                                        student_id
+                                    ),
                                     "attendance_date": (
                                         attendance_date
                                     ),
@@ -1382,7 +1829,8 @@ def recognize_student():
                                             :student_name,
                                         timestamp =
                                             :timestamp,
-                                        status = 'Present'
+                                        status =
+                                            'Present'
                                     WHERE id =
                                           :attendance_id
                                     """
@@ -1423,28 +1871,41 @@ def recognize_student():
                                     """
                                 ),
                                 {
-                                    "class_id": class_id,
-                                    "student_id": student_id,
+                                    "class_id": (
+                                        class_id
+                                    ),
+                                    "student_id": (
+                                        student_id
+                                    ),
                                     "student_name": (
                                         student_name
                                     ),
                                     "timestamp": (
                                         current_time
                                     ),
-                                    "status": "Present",
+                                    "status": (
+                                        "Present"
+                                    ),
                                 },
                             )
 
                     return jsonify(
                         {
                             "success": True,
-                            "student_name": student_name,
-                            "student_id": student_id,
+                            "student_name": (
+                                student_name
+                            ),
+                            "student_id": (
+                                student_id
+                            ),
                             "class_id": class_id,
-                            "attendance_marked": True,
+                            "attendance_marked": (
+                                True
+                            ),
                             "status": "Present",
                             "timestamp": (
-                                current_time.isoformat()
+                                current_time
+                                .isoformat()
                             ),
                         }
                     ), 200
@@ -1452,10 +1913,15 @@ def recognize_student():
             except Exception as error:
                 print(
                     (
-                        "Error comparing face for "
+                        "Recognition error for "
                         f"{student_id}: {error}"
                     ),
                     flush=True,
+                )
+
+            finally:
+                safe_remove(
+                    stored_image_path
                 )
 
         return jsonify(
@@ -1477,32 +1943,45 @@ def recognize_student():
         return jsonify(
             {
                 "success": False,
-                "error": "Face recognition failed",
+                "error": (
+                    "Face recognition failed"
+                ),
             }
         ), 500
 
     finally:
-        safe_remove(test_image_path)
+        safe_remove(
+            test_image_path
+        )
 
 
 # ---------------------------------------------------------
 # Attendance
 # ---------------------------------------------------------
-@app.route("/attendance", methods=["GET"])
+@app.route(
+    "/attendance",
+    methods=["GET"],
+)
 def get_attendance():
-    selected_date_text = request.args.get(
-        "date"
+    selected_date_text = (
+        request.args.get("date")
     )
 
-    class_id = request.args.get("class_id")
+    class_id = request.args.get(
+        "class_id"
+    )
 
-    if not selected_date_text or not class_id:
+    if (
+        not selected_date_text
+        or not class_id
+    ):
         return jsonify(
             {
                 "success": True,
                 "attendance": [],
                 "message": (
-                    "Please select a class and date"
+                    "Please select a class "
+                    "and date"
                 ),
             }
         ), 200
@@ -1516,7 +1995,8 @@ def get_attendance():
             {
                 "success": False,
                 "error": (
-                    "Invalid date. Use YYYY-MM-DD."
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
                 ),
             }
         ), 400
@@ -1550,15 +2030,19 @@ def get_attendance():
                         ON attendance.class_id =
                            classes.id
                     WHERE CAST(
-                        attendance.timestamp AS DATE
+                        attendance.timestamp
+                        AS DATE
                     ) = :selected_date
                       AND attendance.class_id =
                           :class_id
-                    ORDER BY attendance.timestamp DESC
+                    ORDER BY
+                        attendance.timestamp DESC
                     """
                 ),
                 {
-                    "selected_date": selected_date,
+                    "selected_date": (
+                        selected_date
+                    ),
                     "class_id": class_id,
                 },
             ).mappings().all()
@@ -1575,14 +2059,19 @@ def get_attendance():
 
     except SQLAlchemyError as error:
         print(
-            f"Get attendance error: {error}",
+            (
+                "Get attendance error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load attendance",
+                "error": (
+                    "Could not load attendance"
+                ),
             }
         ), 500
 
@@ -1590,10 +2079,13 @@ def get_attendance():
 # ---------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------
-@app.route("/dashboard-stats", methods=["GET"])
+@app.route(
+    "/dashboard-stats",
+    methods=["GET"],
+)
 def dashboard_stats():
-    selected_date_text = request.args.get(
-        "date"
+    selected_date_text = (
+        request.args.get("date")
     )
 
     if selected_date_text:
@@ -1619,14 +2111,16 @@ def dashboard_stats():
 
     try:
         with engine.connect() as connection:
-            total_students = connection.execute(
-                text(
-                    """
-                    SELECT COUNT(*)
-                    FROM students
-                    """
-                )
-            ).scalar_one()
+            total_students = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM students
+                        """
+                    )
+                ).scalar_one()
+            )
 
             total_attendance_records = (
                 connection.execute(
@@ -1674,7 +2168,9 @@ def dashboard_stats():
                     """
                 ),
                 {
-                    "selected_date": selected_date,
+                    "selected_date": (
+                        selected_date
+                    ),
                 },
             ).mappings().first()
 
@@ -1684,7 +2180,9 @@ def dashboard_stats():
                 "selected_date": (
                     selected_date.isoformat()
                 ),
-                "total_students": total_students,
+                "total_students": (
+                    total_students
+                ),
                 "total_attendance_records": (
                     total_attendance_records
                 ),
@@ -1701,7 +2199,10 @@ def dashboard_stats():
 
     except SQLAlchemyError as error:
         print(
-            f"Dashboard error: {error}",
+            (
+                "Dashboard error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1724,9 +2225,16 @@ def dashboard_stats():
     methods=["POST"],
 )
 def create_attendance_policy():
-    class_id = request.form.get("class_id")
+    data = (
+        request.get_json(silent=True)
+        or request.form
+    )
 
-    policy_name = request.form.get(
+    class_id = data.get(
+        "class_id"
+    )
+
+    policy_name = data.get(
         "policy_name"
     )
 
@@ -1744,28 +2252,35 @@ def create_attendance_policy():
     try:
         values = {
             "class_id": int(class_id),
-            "policy_name": policy_name,
+
+            "policy_name": (
+                policy_name
+            ),
+
             "absence_limit": optional_int(
-                request.form.get("absence_limit")
+                data.get("absence_limit")
             ),
+
             "late_limit": optional_int(
-                request.form.get("late_limit")
+                data.get("late_limit")
             ),
+
             "late_minutes": optional_int(
-                request.form.get("late_minutes")
+                data.get("late_minutes")
             ),
+
             "attendance_weight": optional_float(
-                request.form.get(
+                data.get(
                     "attendance_weight"
                 )
             ),
-            "consequence": request.form.get(
+
+            "consequence": data.get(
                 "consequence"
             ),
+
             "excuse_counts": (
-                request.form.get(
-                    "excuse_counts"
-                )
+                data.get("excuse_counts")
                 or "No"
             ),
         }
@@ -1783,27 +2298,6 @@ def create_attendance_policy():
 
     try:
         with engine.begin() as connection:
-            class_exists = connection.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM classes
-                    WHERE id = :class_id
-                    """
-                ),
-                {
-                    "class_id": values["class_id"],
-                },
-            ).first()
-
-            if not class_exists:
-                return jsonify(
-                    {
-                        "success": False,
-                        "error": "Class not found",
-                    }
-                ), 404
-
             connection.execute(
                 text(
                     """
@@ -1842,20 +2336,28 @@ def create_attendance_policy():
 
     except SQLAlchemyError as error:
         print(
-            f"Create policy error: {error}",
+            (
+                "Create policy error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not create policy",
+                "error": (
+                    "Could not create policy"
+                ),
             }
         ), 500
 
 
 @app.route(
-    "/attendance-policies/<int:class_id>",
+    (
+        "/attendance-policies/"
+        "<int:class_id>"
+    ),
     methods=["GET"],
 )
 def get_attendance_policies(class_id):
@@ -1903,23 +2405,33 @@ def get_attendance_policies(class_id):
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load policies",
+                "error": (
+                    "Could not load policies"
+                ),
             }
         ), 500
 
 
 @app.route(
-    "/attendance-policies/<int:policy_id>",
+    (
+        "/attendance-policies/"
+        "<int:policy_id>"
+    ),
     methods=["PUT"],
 )
 def update_attendance_policy(policy_id):
-    data = request.get_json(silent=True) or {}
+    data = (
+        request.get_json(silent=True)
+        or {}
+    )
 
     if not data.get("policy_name"):
         return jsonify(
             {
                 "success": False,
-                "error": "Policy name is required",
+                "error": (
+                    "Policy name is required"
+                ),
             }
         ), 400
 
@@ -1928,25 +2440,34 @@ def update_attendance_policy(policy_id):
             "policy_name": data.get(
                 "policy_name"
             ),
+
             "absence_limit": optional_int(
                 data.get("absence_limit")
             ),
+
             "late_limit": optional_int(
                 data.get("late_limit")
             ),
+
             "late_minutes": optional_int(
                 data.get("late_minutes")
             ),
+
             "attendance_weight": optional_float(
-                data.get("attendance_weight")
+                data.get(
+                    "attendance_weight"
+                )
             ),
+
             "consequence": data.get(
                 "consequence"
             ),
+
             "excuse_counts": (
                 data.get("excuse_counts")
                 or "No"
             ),
+
             "policy_id": policy_id,
         }
 
@@ -1991,26 +2512,36 @@ def update_attendance_policy(policy_id):
         return jsonify(
             {
                 "success": True,
-                "updated": result.rowcount > 0,
+                "updated": (
+                    result.rowcount > 0
+                ),
             }
         ), 200
 
     except SQLAlchemyError as error:
         print(
-            f"Update policy error: {error}",
+            (
+                "Update policy error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not update policy",
+                "error": (
+                    "Could not update policy"
+                ),
             }
         ), 500
 
 
 @app.route(
-    "/attendance-policies/<int:policy_id>",
+    (
+        "/attendance-policies/"
+        "<int:policy_id>"
+    ),
     methods=["DELETE"],
 )
 def delete_attendance_policy(policy_id):
@@ -2019,7 +2550,8 @@ def delete_attendance_policy(policy_id):
             result = connection.execute(
                 text(
                     """
-                    DELETE FROM attendance_policies
+                    DELETE FROM
+                        attendance_policies
                     WHERE id = :policy_id
                     """
                 ),
@@ -2031,20 +2563,27 @@ def delete_attendance_policy(policy_id):
         return jsonify(
             {
                 "success": True,
-                "deleted": result.rowcount > 0,
+                "deleted": (
+                    result.rowcount > 0
+                ),
             }
         ), 200
 
     except SQLAlchemyError as error:
         print(
-            f"Delete policy error: {error}",
+            (
+                "Delete policy error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not delete policy",
+                "error": (
+                    "Could not delete policy"
+                ),
             }
         ), 500
 
@@ -2084,31 +2623,33 @@ def policy_risk(class_id):
                         "success": True,
                         "has_policy": False,
                         "message": (
-                            "No attendance policy set "
-                            "for this class"
+                            "No attendance policy "
+                            "set for this class"
                         ),
                         "at_risk": [],
                     }
                 ), 200
 
-            enrolled_students = connection.execute(
-                text(
-                    """
-                    SELECT
-                        students.student_id,
-                        students.student_name
-                    FROM class_students
-                    JOIN students
-                        ON class_students.student_id =
-                           students.student_id
-                    WHERE class_students.class_id =
-                          :class_id
-                    """
-                ),
-                {
-                    "class_id": class_id,
-                },
-            ).mappings().all()
+            enrolled_students = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            students.student_id,
+                            students.student_name
+                        FROM class_students
+                        JOIN students
+                            ON class_students.student_id =
+                               students.student_id
+                        WHERE class_students.class_id =
+                              :class_id
+                        """
+                    ),
+                    {
+                        "class_id": class_id,
+                    },
+                ).mappings().all()
+            )
 
             total_class_days = (
                 connection.execute(
@@ -2120,7 +2661,8 @@ def policy_risk(class_id):
                             )
                         )
                         FROM attendance
-                        WHERE class_id = :class_id
+                        WHERE class_id =
+                              :class_id
                         """
                     ),
                     {
@@ -2146,40 +2688,55 @@ def policy_risk(class_id):
                                   :class_id
                               AND student_id =
                                   :student_id
-                              AND status = 'Present'
+                              AND status =
+                                  'Present'
                             """
                         ),
                         {
-                            "class_id": class_id,
-                            "student_id": student[
-                                "student_id"
-                            ],
+                            "class_id": (
+                                class_id
+                            ),
+                            "student_id": (
+                                student[
+                                    "student_id"
+                                ]
+                            ),
                         },
                     ).scalar_one()
                 )
 
                 absences = max(
-                    total_class_days - present_days,
+                    total_class_days
+                    - present_days,
                     0,
                 )
 
-                absence_limit = policy[
-                    "absence_limit"
-                ]
+                absence_limit = (
+                    policy[
+                        "absence_limit"
+                    ]
+                )
 
                 if (
                     absence_limit is not None
-                    and absences >= absence_limit
+                    and absences
+                    >= absence_limit
                 ):
                     at_risk.append(
                         {
-                            "student_id": student[
-                                "student_id"
-                            ],
-                            "student_name": student[
-                                "student_name"
-                            ],
-                            "absences": absences,
+                            "student_id": (
+                                student[
+                                    "student_id"
+                                ]
+                            ),
+                            "student_name": (
+                                student[
+                                    "student_name"
+                                ]
+                            ),
+                            "absences": (
+                                absences
+                            ),
                             "absence_limit": (
                                 absence_limit
                             ),
@@ -2191,15 +2748,15 @@ def policy_risk(class_id):
                 "success": True,
                 "has_policy": True,
                 "policy_id": policy["id"],
-                "policy_name": policy[
-                    "policy_name"
-                ],
-                "absence_limit": policy[
-                    "absence_limit"
-                ],
-                "consequence": policy[
-                    "consequence"
-                ],
+                "policy_name": (
+                    policy["policy_name"]
+                ),
+                "absence_limit": (
+                    policy["absence_limit"]
+                ),
+                "consequence": (
+                    policy["consequence"]
+                ),
                 "total_class_days": (
                     total_class_days
                 ),
@@ -2209,7 +2766,10 @@ def policy_risk(class_id):
 
     except SQLAlchemyError as error:
         print(
-            f"Policy risk error: {error}",
+            (
+                "Policy risk error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -2228,7 +2788,10 @@ def policy_risk(class_id):
 # Attendance trend
 # ---------------------------------------------------------
 @app.route(
-    "/attendance-trend/<int:class_id>",
+    (
+        "/attendance-trend/"
+        "<int:class_id>"
+    ),
     methods=["GET"],
 )
 def attendance_trend(class_id):
@@ -2240,7 +2803,8 @@ def attendance_trend(class_id):
                         """
                         SELECT COUNT(*)
                         FROM class_students
-                        WHERE class_id = :class_id
+                        WHERE class_id =
+                              :class_id
                         """
                     ),
                     {
@@ -2255,14 +2819,19 @@ def attendance_trend(class_id):
                     SELECT
                         CAST(timestamp AS DATE)
                             AS attendance_date,
-                        COUNT(DISTINCT student_id)
+                        COUNT(
+                            DISTINCT student_id
+                        )
                             AS present_count
                     FROM attendance
                     WHERE class_id = :class_id
                       AND status = 'Present'
-                    GROUP BY CAST(timestamp AS DATE)
-                    ORDER BY CAST(timestamp AS DATE)
-                        DESC
+                    GROUP BY CAST(
+                        timestamp AS DATE
+                    )
+                    ORDER BY CAST(
+                        timestamp AS DATE
+                    ) DESC
                     LIMIT 5
                     """
                 ),
@@ -2274,9 +2843,9 @@ def attendance_trend(class_id):
         trend = []
 
         for row in reversed(rows):
-            present_count = row[
-                "present_count"
-            ]
+            present_count = (
+                row["present_count"]
+            )
 
             attendance_rate = 0
 
@@ -2291,9 +2860,11 @@ def attendance_trend(class_id):
 
             trend.append(
                 {
-                    "date": row[
-                        "attendance_date"
-                    ].isoformat(),
+                    "date": (
+                        row[
+                            "attendance_date"
+                        ].isoformat()
+                    ),
                     "present_count": (
                         present_count
                     ),
@@ -2315,7 +2886,10 @@ def attendance_trend(class_id):
 
     except SQLAlchemyError as error:
         print(
-            f"Attendance trend error: {error}",
+            (
+                "Attendance trend error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -2323,7 +2897,8 @@ def attendance_trend(class_id):
             {
                 "success": False,
                 "error": (
-                    "Could not load attendance trend"
+                    "Could not load "
+                    "attendance trend"
                 ),
             }
         ), 500
@@ -2337,10 +2912,12 @@ def attendance_trend(class_id):
     methods=["GET"],
 )
 def export_attendance():
-    class_id = request.args.get("class_id")
+    class_id = request.args.get(
+        "class_id"
+    )
 
-    selected_date_text = request.args.get(
-        "date"
+    selected_date_text = (
+        request.args.get("date")
     )
 
     if not class_id or not selected_date_text:
@@ -2362,7 +2939,8 @@ def export_attendance():
             {
                 "success": False,
                 "error": (
-                    "Invalid date. Use YYYY-MM-DD."
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
                 ),
             }
         ), 400
@@ -2397,20 +2975,27 @@ def export_attendance():
                     WHERE attendance.class_id =
                           :class_id
                       AND CAST(
-                          attendance.timestamp AS DATE
+                          attendance.timestamp
+                          AS DATE
                       ) = :selected_date
-                    ORDER BY attendance.timestamp ASC
+                    ORDER BY
+                        attendance.timestamp ASC
                     """
                 ),
                 {
                     "class_id": class_id,
-                    "selected_date": selected_date,
+                    "selected_date": (
+                        selected_date
+                    ),
                 },
             ).all()
 
     except SQLAlchemyError as error:
         print(
-            f"Export attendance error: {error}",
+            (
+                "Export attendance error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -2424,7 +3009,10 @@ def export_attendance():
         ), 500
 
     output = io.StringIO()
-    writer = csv.writer(output)
+
+    writer = csv.writer(
+        output
+    )
 
     writer.writerow(
         [
@@ -2451,11 +3039,14 @@ def export_attendance():
         mimetype="text/csv",
     )
 
-    response.headers["Content-Disposition"] = (
+    response.headers[
+        "Content-Disposition"
+    ] = (
         "attachment; "
         f"filename=attendance_"
         f"{class_id}_"
-        f"{selected_date.isoformat()}.csv"
+        f"{selected_date.isoformat()}"
+        ".csv"
     )
 
     return response
@@ -2464,19 +3055,31 @@ def export_attendance():
 # ---------------------------------------------------------
 # Excuses
 # ---------------------------------------------------------
-@app.route("/excuses", methods=["POST"])
+@app.route(
+    "/excuses",
+    methods=["POST"],
+)
 def submit_excuse():
-    student_id = request.form.get(
+    data = (
+        request.get_json(silent=True)
+        or request.form
+    )
+
+    student_id = data.get(
         "student_id"
     )
 
-    class_id = request.form.get("class_id")
+    class_id = data.get(
+        "class_id"
+    )
 
-    excuse_date_text = request.form.get(
+    excuse_date_text = data.get(
         "excuse_date"
     )
 
-    reason = request.form.get("reason")
+    reason = data.get(
+        "reason"
+    )
 
     if (
         not student_id
@@ -2487,7 +3090,9 @@ def submit_excuse():
         return jsonify(
             {
                 "success": False,
-                "error": "Missing required fields",
+                "error": (
+                    "Missing required fields"
+                ),
             }
         ), 400
 
@@ -2500,7 +3105,8 @@ def submit_excuse():
             {
                 "success": False,
                 "error": (
-                    "Invalid date. Use YYYY-MM-DD."
+                    "Invalid date. "
+                    "Use YYYY-MM-DD."
                 ),
             }
         ), 400
@@ -2518,45 +3124,58 @@ def submit_excuse():
 
     try:
         with engine.begin() as connection:
-            student_exists = connection.execute(
-                text(
-                    """
-                    SELECT student_id
-                    FROM students
-                    WHERE student_id = :student_id
-                    """
-                ),
-                {
-                    "student_id": student_id,
-                },
-            ).first()
+            student_exists = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT student_id
+                        FROM students
+                        WHERE student_id =
+                              :student_id
+                        """
+                    ),
+                    {
+                        "student_id": (
+                            student_id
+                        ),
+                    },
+                ).first()
+            )
 
             if not student_exists:
                 return jsonify(
                     {
                         "success": False,
-                        "error": "Student not found",
+                        "error": (
+                            "Student not found"
+                        ),
                     }
                 ), 404
 
-            class_exists = connection.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM classes
-                    WHERE id = :class_id
-                    """
-                ),
-                {
-                    "class_id": class_id,
-                },
-            ).first()
+            class_exists = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM classes
+                        WHERE id = :class_id
+                        """
+                    ),
+                    {
+                        "class_id": (
+                            class_id
+                        ),
+                    },
+                ).first()
+            )
 
             if not class_exists:
                 return jsonify(
                     {
                         "success": False,
-                        "error": "Class not found",
+                        "error": (
+                            "Class not found"
+                        ),
                     }
                 ), 404
 
@@ -2598,19 +3217,27 @@ def submit_excuse():
 
     except SQLAlchemyError as error:
         print(
-            f"Submit excuse error: {error}",
+            (
+                "Submit excuse error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not submit excuse",
+                "error": (
+                    "Could not submit excuse"
+                ),
             }
         ), 500
 
 
-@app.route("/excuses", methods=["GET"])
+@app.route(
+    "/excuses",
+    methods=["GET"],
+)
 def get_excuses():
     try:
         with engine.connect() as connection:
@@ -2635,7 +3262,8 @@ def get_excuses():
                     JOIN classes
                         ON excuses.class_id =
                            classes.id
-                    ORDER BY excuses.submitted_at DESC
+                    ORDER BY
+                        excuses.submitted_at DESC
                     """
                 )
             ).mappings().all()
@@ -2659,7 +3287,9 @@ def get_excuses():
         return jsonify(
             {
                 "success": False,
-                "error": "Could not load excuses",
+                "error": (
+                    "Could not load excuses"
+                ),
             }
         ), 500
 
@@ -2669,9 +3299,14 @@ def get_excuses():
     methods=["PUT"],
 )
 def update_excuse_status(excuse_id):
-    data = request.get_json(silent=True) or {}
+    data = (
+        request.get_json(silent=True)
+        or {}
+    )
 
-    status = data.get("status")
+    status = data.get(
+        "status"
+    )
 
     if status not in [
         "Approved",
@@ -2699,7 +3334,9 @@ def update_excuse_status(excuse_id):
                     """
                 ),
                 {
-                    "excuse_id": excuse_id,
+                    "excuse_id": (
+                        excuse_id
+                    ),
                 },
             ).mappings().first()
 
@@ -2707,7 +3344,9 @@ def update_excuse_status(excuse_id):
                 return jsonify(
                     {
                         "success": False,
-                        "error": "Excuse not found",
+                        "error": (
+                            "Excuse not found"
+                        ),
                     }
                 ), 404
 
@@ -2737,9 +3376,11 @@ def update_excuse_status(excuse_id):
                             """
                         ),
                         {
-                            "student_id": excuse[
-                                "student_id"
-                            ],
+                            "student_id": (
+                                excuse[
+                                    "student_id"
+                                ]
+                            ),
                         },
                     ).scalar_one_or_none()
                     or "Unknown"
@@ -2762,15 +3403,21 @@ def update_excuse_status(excuse_id):
                             """
                         ),
                         {
-                            "student_id": excuse[
-                                "student_id"
-                            ],
-                            "class_id": excuse[
-                                "class_id"
-                            ],
-                            "excuse_date": excuse[
-                                "excuse_date"
-                            ],
+                            "student_id": (
+                                excuse[
+                                    "student_id"
+                                ]
+                            ),
+                            "class_id": (
+                                excuse[
+                                    "class_id"
+                                ]
+                            ),
+                            "excuse_date": (
+                                excuse[
+                                    "excuse_date"
+                                ]
+                            ),
                         },
                     ).first()
                 )
@@ -2793,10 +3440,14 @@ def update_excuse_status(excuse_id):
                     )
 
                 else:
-                    excuse_timestamp = datetime.combine(
-                        excuse["excuse_date"],
-                        time.min,
-                        tzinfo=timezone.utc,
+                    excuse_timestamp = (
+                        datetime.combine(
+                            excuse[
+                                "excuse_date"
+                            ],
+                            time.min,
+                            tzinfo=timezone.utc,
+                        )
                     )
 
                     connection.execute(
@@ -2821,12 +3472,16 @@ def update_excuse_status(excuse_id):
                             """
                         ),
                         {
-                            "class_id": excuse[
-                                "class_id"
-                            ],
-                            "student_id": excuse[
-                                "student_id"
-                            ],
+                            "class_id": (
+                                excuse[
+                                    "class_id"
+                                ]
+                            ),
+                            "student_id": (
+                                excuse[
+                                    "student_id"
+                                ]
+                            ),
                             "student_name": (
                                 student_name
                             ),
@@ -2845,14 +3500,19 @@ def update_excuse_status(excuse_id):
 
     except SQLAlchemyError as error:
         print(
-            f"Update excuse error: {error}",
+            (
+                "Update excuse error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
-                "error": "Could not update excuse",
+                "error": (
+                    "Could not update excuse"
+                ),
             }
         ), 500
 
@@ -2868,7 +3528,9 @@ def serve_home():
     )
 
 
-@app.route("/<path:filename>")
+@app.route(
+    "/<path:filename>"
+)
 def serve_frontend(filename):
     return send_from_directory(
         FRONTEND_DIR,
@@ -2882,9 +3544,14 @@ def serve_frontend(filename):
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
+
         port=int(
-            os.environ.get("PORT", 5000)
+            os.environ.get(
+                "PORT",
+                5000,
+            )
         ),
+
         debug=(
             os.environ.get(
                 "FLASK_DEBUG",
