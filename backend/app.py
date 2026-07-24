@@ -1066,6 +1066,7 @@ def extract_face_with_mediapipe(
 # ---------------------------------------------------------
 # Basic API status routes
 # ---------------------------------------------------------
+
 @app.route(
     "/api",
     methods=["GET"],
@@ -1080,7 +1081,14 @@ def api_status():
             ),
         }
     ), 200
-
+@app.route("/debug-versions", methods=["GET"])
+def debug_versions():
+    import google.protobuf
+    import tensorflow as tf
+    return jsonify({
+        "protobuf": google.protobuf.__version__,
+        "tensorflow": tf.__version__,
+    }), 200
 
 @app.route(
     "/health",
