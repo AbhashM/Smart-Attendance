@@ -1,9 +1,11 @@
 from flask import (
     Flask,
+    Response,
     jsonify,
     request,
     send_from_directory,
 )
+
 from flask_cors import CORS
 
 from datetime import (
@@ -14,18 +16,22 @@ from datetime import (
 )
 
 import csv
-import cv2
-import numpy as np
-import mediapipe as mp
-import google.protobuf
-import traceback
 import io
 import os
-import tempfile
+import re
 import threading
+import traceback
 import uuid
 
-from azure.core.exceptions import ResourceExistsError
+import cv2
+import mediapipe as mp
+import numpy as np
+
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceNotFoundError,
+)
+
 from azure.storage.blob import (
     BlobServiceClient,
     ContentSettings,
@@ -47,19 +53,21 @@ from sqlalchemy import (
 )
 
 from sqlalchemy.engine import URL
+
 from sqlalchemy.exc import (
     IntegrityError,
     SQLAlchemyError,
 )
 
 
+# ---------------------------------------------------------
+# Flask configuration
+# ---------------------------------------------------------
 app = Flask(__name__)
+
 CORS(app)
 
 
-# ---------------------------------------------------------
-# Project paths
-# ---------------------------------------------------------
 BACKEND_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
@@ -73,15 +81,7 @@ FRONTEND_DIR = os.path.join(
     "frontend",
 )
 
-print(
-    f"Runtime MediaPipe version: {mp.__version__}",
-    flush=True,
-)
 
-print(
-    f"Runtime protobuf version: {google.protobuf.__version__}",
-    flush=True,
-)
 # ---------------------------------------------------------
 # PostgreSQL configuration
 # ---------------------------------------------------------
@@ -130,34 +130,57 @@ def build_database_url():
 
     if missing_variables:
         raise RuntimeError(
-            "Missing database environment variables: "
-            + ", ".join(missing_variables)
+            (
+                "Missing database environment "
+                "variables: "
+                + ", ".join(
+                    missing_variables
+                )
+            )
         )
 
     return URL.create(
-        drivername="postgresql+psycopg",
-        username=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        host=os.environ["DB_HOST"],
+        drivername=(
+            "postgresql+psycopg"
+        ),
+
+        username=os.environ.get(
+            "DB_USER"
+        ),
+
+        password=os.environ.get(
+            "DB_PASSWORD"
+        ),
+
+        host=os.environ.get(
+            "DB_HOST"
+        ),
+
         port=int(
             os.environ.get(
                 "DB_PORT",
                 "5432",
             )
         ),
-        database=os.environ["DB_NAME"],
+
+        database=os.environ.get(
+            "DB_NAME"
+        ),
+
         query={
             "sslmode": os.environ.get(
                 "DB_SSLMODE",
                 "require",
-            )
+            ),
         },
     )
 
 
 engine = create_engine(
     build_database_url(),
+
     pool_pre_ping=True,
+
     pool_recycle=300,
 )
 
@@ -178,24 +201,31 @@ AZURE_STORAGE_CONTAINER = (
     )
 )
 
+
 if not AZURE_STORAGE_CONNECTION_STRING:
     raise RuntimeError(
-        "AZURE_STORAGE_CONNECTION_STRING "
-        "is missing"
+        (
+            "AZURE_STORAGE_CONNECTION_STRING "
+            "is missing"
+        )
     )
 
 
 blob_service_client = (
-    BlobServiceClient.from_connection_string(
+    BlobServiceClient
+    .from_connection_string(
         AZURE_STORAGE_CONNECTION_STRING
     )
 )
 
+
 container_client = (
-    blob_service_client.get_container_client(
+    blob_service_client
+    .get_container_client(
         AZURE_STORAGE_CONTAINER
     )
 )
+
 
 try:
     container_client.create_container()
@@ -270,7 +300,10 @@ student_images_table = Table(
 
     Column(
         "created_at",
-        DateTime(timezone=True),
+        DateTime(
+            timezone=True
+        ),
+
         nullable=False,
 
         server_default=text(
@@ -383,7 +416,10 @@ attendance_table = Table(
 
     Column(
         "timestamp",
-        DateTime(timezone=True),
+        DateTime(
+            timezone=True
+        ),
+
         nullable=False,
 
         server_default=text(
@@ -399,6 +435,18 @@ attendance_table = Table(
         server_default=text(
             "'Present'"
         ),
+    ),
+
+    Column(
+        "attendance_photo_path",
+        Text,
+        nullable=True,
+    ),
+
+    Column(
+        "recognition_distance",
+        Float,
+        nullable=True,
     ),
 )
 
@@ -434,26 +482,31 @@ attendance_policies_table = Table(
     Column(
         "absence_limit",
         Integer,
+        nullable=True,
     ),
 
     Column(
         "late_limit",
         Integer,
+        nullable=True,
     ),
 
     Column(
         "late_minutes",
         Integer,
+        nullable=True,
     ),
 
     Column(
         "attendance_weight",
         Float,
+        nullable=True,
     ),
 
     Column(
         "consequence",
         Text,
+        nullable=True,
     ),
 
     Column(
@@ -526,7 +579,10 @@ excuses_table = Table(
 
     Column(
         "submitted_at",
-        DateTime(timezone=True),
+        DateTime(
+            timezone=True
+        ),
+
         nullable=False,
 
         server_default=text(
@@ -536,14 +592,42 @@ excuses_table = Table(
 )
 
 
-metadata.create_all(engine)
+metadata.create_all(
+    engine
+)
 
 
 # ---------------------------------------------------------
-# Lazy-loaded AI dependencies
+# Safe schema migration
+# ---------------------------------------------------------
+with engine.begin() as connection:
+    connection.execute(
+        text(
+            """
+            ALTER TABLE attendance
+            ADD COLUMN IF NOT EXISTS
+                attendance_photo_path TEXT
+            """
+        )
+    )
+
+    connection.execute(
+        text(
+            """
+            ALTER TABLE attendance
+            ADD COLUMN IF NOT EXISTS
+                recognition_distance
+                DOUBLE PRECISION
+            """
+        )
+    )
+
+
+# ---------------------------------------------------------
+# Lazy-loaded AI models
 # ---------------------------------------------------------
 _deepface = None
-_face_detector = None
+
 _ai_lock = threading.Lock()
 
 
@@ -553,73 +637,41 @@ def get_deepface():
     if _deepface is None:
         with _ai_lock:
             if _deepface is None:
-                print(
-                    "Loading DeepFace...",
-                    flush=True,
+                from deepface import (
+                    DeepFace
                 )
-
-                from deepface import DeepFace
 
                 _deepface = DeepFace
-
-                print(
-                    "DeepFace loaded.",
-                    flush=True,
-                )
 
     return _deepface
 
 
-def get_face_detector():
-    global _face_detector
-
-    if _face_detector is None:
-        with _ai_lock:
-            if _face_detector is None:
-                print(
-                    "Loading MediaPipe "
-                    "face detector...",
-                    flush=True,
-                )
-
-                import mediapipe as mp
-
-                _face_detector = (
-                    mp.solutions
-                    .face_detection
-                    .FaceDetection(
-                        model_selection=0,
-                        min_detection_confidence=0.5,
-                    )
-                )
-
-                print(
-                    "MediaPipe face detector "
-                    "loaded.",
-                    flush=True,
-                )
-
-    return _face_detector
-
-
 # ---------------------------------------------------------
-# Helper functions
+# General helper functions
 # ---------------------------------------------------------
-def safe_remove(path):
+def safe_remove(file_path):
+    if not file_path:
+        return
+
     try:
-        if path and os.path.exists(path):
-            os.remove(path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     except OSError as error:
         print(
-            f"Could not remove {path}: {error}",
+            (
+                "Could not remove file "
+                f"{file_path}: {error}"
+            ),
             flush=True,
         )
 
 
 def parse_date(value):
     try:
-        return date.fromisoformat(value)
+        return date.fromisoformat(
+            value
+        )
 
     except (
         TypeError,
@@ -652,8 +704,8 @@ def serialize_value(value):
     if isinstance(
         value,
         (
-            date,
             datetime,
+            date,
         ),
     ):
         return value.isoformat()
@@ -669,41 +721,44 @@ def serialize_row(row):
 
 
 def sanitize_label(value):
-    return "".join(
-        character
-        if (
-            character.isalnum()
-            or character in "-_"
-        )
-        else "_"
-        for character in value
+    safe_value = re.sub(
+        r"[^A-Za-z0-9_-]+",
+        "_",
+        str(value).strip(),
+    )
+
+    return (
+        safe_value.strip("_")
+        or "appearance"
     )
 
 
+# ---------------------------------------------------------
+# Azure Blob helper functions
+# ---------------------------------------------------------
 def upload_face_image(
     image_file,
     student_id,
     appearance_label,
 ):
-    original_filename = os.path.basename(
-        image_file.filename
-        or "image.jpg"
+    original_filename = (
+        os.path.basename(
+            image_file.filename
+            or "image.jpg"
+        )
     )
 
-    extension = os.path.splitext(
-        original_filename
-    )[1].lower()
-
-    if not extension:
-        extension = ".jpg"
-
-    safe_label = sanitize_label(
-        appearance_label
+    extension = (
+        os.path.splitext(
+            original_filename
+        )[1].lower()
+        or ".jpg"
     )
 
     blob_name = (
-        f"{student_id}/"
-        f"{safe_label}/"
+        f"students/"
+        f"{sanitize_label(student_id)}/"
+        f"{sanitize_label(appearance_label)}/"
         f"{uuid.uuid4().hex}"
         f"{extension}"
     )
@@ -711,19 +766,23 @@ def upload_face_image(
     image_file.stream.seek(0)
 
     blob_client = (
-        container_client.get_blob_client(
+        container_client
+        .get_blob_client(
             blob_name
         )
     )
 
     blob_client.upload_blob(
         image_file.stream,
+
         overwrite=True,
 
-        content_settings=ContentSettings(
-            content_type=(
-                image_file.content_type
-                or "image/jpeg"
+        content_settings=(
+            ContentSettings(
+                content_type=(
+                    image_file.content_type
+                    or "image/jpeg"
+                )
             )
         ),
     )
@@ -731,50 +790,48 @@ def upload_face_image(
     return blob_name
 
 
-def download_blob_to_temp(blob_name):
-    extension = os.path.splitext(
-        blob_name
-    )[1]
+def upload_attendance_photo(
+    image_bytes,
+    class_id,
+    student_id,
+):
+    current_time = datetime.now(
+        timezone.utc
+    )
 
-    temporary_file = (
-        tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=extension or ".jpg",
+    blob_name = (
+        f"attendance/"
+        f"{class_id}/"
+        f"{sanitize_label(student_id)}/"
+        f"{current_time.date().isoformat()}/"
+        f"{uuid.uuid4().hex}.jpg"
+    )
+
+    blob_client = (
+        container_client
+        .get_blob_client(
+            blob_name
         )
     )
 
-    temporary_path = temporary_file.name
+    blob_client.upload_blob(
+        image_bytes,
 
-    try:
-        blob_client = (
-            container_client.get_blob_client(
-                blob_name
+        overwrite=False,
+
+        content_settings=(
+            ContentSettings(
+                content_type="image/jpeg"
             )
-        )
+        ),
+    )
 
-        blob_data = (
-            blob_client.download_blob()
-        )
-
-        temporary_file.write(
-            blob_data.readall()
-        )
-
-        temporary_file.close()
-
-        return temporary_path
-
-    except Exception:
-        temporary_file.close()
-
-        safe_remove(
-            temporary_path
-        )
-
-        raise
+    return blob_name
 
 
-def delete_blob_if_exists(blob_name):
+def delete_blob_if_exists(
+    blob_name,
+):
     if not blob_name:
         return
 
@@ -783,96 +840,34 @@ def delete_blob_if_exists(blob_name):
             blob_name
         )
 
+    except ResourceNotFoundError:
+        pass
+
     except Exception as error:
         print(
             (
-                "Could not delete blob "
+                "Could not delete Azure blob "
                 f"{blob_name}: {error}"
             ),
             flush=True,
         )
 
-def extract_face_with_mediapipe(image):
-    """
-    Detect exactly one face and return a padded face crop.
 
-    Returns:
-        cropped_face, None
-        None, error_message
-    """
-
-    if image is None or image.size == 0:
-        return None, "Image could not be read"
-
-    image_height, image_width = image.shape[:2]
-
-    rgb_image = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2RGB,
+def download_blob_as_image(
+    blob_name,
+):
+    blob_client = (
+        container_client
+        .get_blob_client(
+            blob_name
+        )
     )
 
-    with mp.solutions.face_detection.FaceDetection(
-        model_selection=1,
-        min_detection_confidence=0.60,
-    ) as face_detector:
-        results = face_detector.process(rgb_image)
-
-    detections = results.detections or []
-
-    if len(detections) == 0:
-        return None, "No face detected in uploaded image"
-
-    if len(detections) > 1:
-        return None, "Multiple faces detected. Please upload one face only"
-
-    detection = detections[0]
-
-    bounding_box = (
-        detection.location_data.relative_bounding_box
+    blob_bytes = (
+        blob_client
+        .download_blob()
+        .readall()
     )
-
-    x = int(bounding_box.xmin * image_width)
-    y = int(bounding_box.ymin * image_height)
-    width = int(bounding_box.width * image_width)
-    height = int(bounding_box.height * image_height)
-
-    if width <= 0 or height <= 0:
-        return None, "Invalid face detected"
-
-    # Add padding so DeepFace receives the full face area
-    horizontal_padding = int(width * 0.25)
-    vertical_padding = int(height * 0.30)
-
-    x1 = max(0, x - horizontal_padding)
-    y1 = max(0, y - vertical_padding)
-    x2 = min(
-        image_width,
-        x + width + horizontal_padding,
-    )
-    y2 = min(
-        image_height,
-        y + height + vertical_padding,
-    )
-
-    face_crop = image[y1:y2, x1:x2]
-
-    if face_crop is None or face_crop.size == 0:
-        return None, "Face crop could not be created"
-
-    # Reject extremely small faces
-    face_height, face_width = face_crop.shape[:2]
-
-    if face_width < 80 or face_height < 80:
-        return None, "Face is too small or too far away"
-
-    return face_crop, None
-
-def download_blob_as_image(blob_name):
-    blob_client = container_client.get_blob_client(
-        blob_name
-    )
-
-    blob_bytes = blob_client.download_blob().readall()
 
     image_array = np.frombuffer(
         blob_bytes,
@@ -886,28 +881,202 @@ def download_blob_as_image(blob_name):
 
     if image is None:
         raise ValueError(
-            f"Could not decode blob image: {blob_name}"
+            (
+                "Could not decode stored "
+                f"image: {blob_name}"
+            )
         )
 
     return image
 
+
 # ---------------------------------------------------------
-# API and health
+# Face extraction
+# ---------------------------------------------------------
+def extract_face_with_mediapipe(
+    image,
+):
+    if (
+        image is None
+        or image.size == 0
+    ):
+        return (
+            None,
+            "Image could not be read",
+        )
+
+    image_height, image_width = (
+        image.shape[:2]
+    )
+
+    rgb_image = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2RGB,
+    )
+
+    with (
+        mp.solutions
+        .face_detection
+        .FaceDetection(
+            model_selection=1,
+
+            min_detection_confidence=(
+                0.60
+            ),
+        )
+    ) as face_detector:
+        results = (
+            face_detector.process(
+                rgb_image
+            )
+        )
+
+    detections = (
+        results.detections
+        if results
+        and results.detections
+        else []
+    )
+
+    if len(detections) == 0:
+        return (
+            None,
+            (
+                "No face detected in "
+                "uploaded image"
+            ),
+        )
+
+    if len(detections) > 1:
+        return (
+            None,
+            (
+                "Multiple faces detected. "
+                "Please capture one face only"
+            ),
+        )
+
+    bounding_box = (
+        detections[0]
+        .location_data
+        .relative_bounding_box
+    )
+
+    x = int(
+        bounding_box.xmin
+        * image_width
+    )
+
+    y = int(
+        bounding_box.ymin
+        * image_height
+    )
+
+    width = int(
+        bounding_box.width
+        * image_width
+    )
+
+    height = int(
+        bounding_box.height
+        * image_height
+    )
+
+    if width <= 0 or height <= 0:
+        return (
+            None,
+            "Invalid face detected",
+        )
+
+    horizontal_padding = int(
+        width * 0.25
+    )
+
+    vertical_padding = int(
+        height * 0.30
+    )
+
+    x1 = max(
+        0,
+        x - horizontal_padding,
+    )
+
+    y1 = max(
+        0,
+        y - vertical_padding,
+    )
+
+    x2 = min(
+        image_width,
+        (
+            x
+            + width
+            + horizontal_padding
+        ),
+    )
+
+    y2 = min(
+        image_height,
+        (
+            y
+            + height
+            + vertical_padding
+        ),
+    )
+
+    face_crop = image[
+        y1:y2,
+        x1:x2,
+    ]
+
+    if (
+        face_crop is None
+        or face_crop.size == 0
+    ):
+        return (
+            None,
+            (
+                "Face crop could not "
+                "be created"
+            ),
+        )
+
+    face_height, face_width = (
+        face_crop.shape[:2]
+    )
+
+    if (
+        face_width < 80
+        or face_height < 80
+    ):
+        return (
+            None,
+            (
+                "Face is too small or "
+                "too far away"
+            ),
+        )
+
+    return (
+        face_crop,
+        None,
+    )
+
+
+# ---------------------------------------------------------
+# Basic API status routes
 # ---------------------------------------------------------
 @app.route(
     "/api",
     methods=["GET"],
 )
-def home():
+def api_status():
     return jsonify(
         {
-            "status": "running",
-            "service": (
-                "Smart Attendance Backend"
-            ),
-            "database": "PostgreSQL",
-            "image_storage": (
-                "Azure Blob Storage"
+            "success": True,
+            "message": (
+                "Smart Attendance API "
+                "is running"
             ),
         }
     ), 200
@@ -917,27 +1086,28 @@ def home():
     "/health",
     methods=["GET"],
 )
-def health():
+def health_check():
     try:
         with engine.connect() as connection:
             connection.execute(
                 text("SELECT 1")
             )
 
-        container_client.get_container_properties()
-
         return jsonify(
             {
                 "success": True,
                 "status": "healthy",
                 "database": "connected",
-                "blob_storage": "connected",
+                "storage": "configured",
             }
         ), 200
 
     except Exception as error:
         print(
-            f"Health check error: {error}",
+            (
+                "Health check error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -947,9 +1117,7 @@ def health():
                 "status": "unhealthy",
                 "error": str(error),
             }
-        ), 503
-
-
+        ), 500
 # ---------------------------------------------------------
 # Face detection
 # ---------------------------------------------------------
@@ -958,33 +1126,30 @@ def health():
     methods=["POST"],
 )
 def detect_face():
-    if "image" not in request.files:
+    uploaded_image = request.files.get(
+        "image"
+    )
+
+    if not uploaded_image:
         return jsonify(
             {
                 "success": False,
-                "error": "No image uploaded",
+                "error": "Image is required",
             }
         ), 400
 
     try:
-        import cv2
-        import numpy as np
-
-        uploaded_file = (
-            request.files["image"]
-        )
-
         image_bytes = (
-            uploaded_file.read()
+            uploaded_image.read()
         )
 
-        numpy_image = np.frombuffer(
+        image_array = np.frombuffer(
             image_bytes,
             np.uint8,
         )
 
         image = cv2.imdecode(
-            numpy_image,
+            image_array,
             cv2.IMREAD_COLOR,
         )
 
@@ -993,28 +1158,37 @@ def detect_face():
                 {
                     "success": False,
                     "error": (
-                        "Invalid image file"
+                        "Uploaded image could "
+                        "not be decoded"
                     ),
                 }
             ), 400
 
-        rgb_image = cv2.cvtColor(
-            image,
-            cv2.COLOR_BGR2RGB,
+        face_crop, face_error = (
+            extract_face_with_mediapipe(
+                image
+            )
         )
 
-        detector = get_face_detector()
+        if face_error:
+            return jsonify(
+                {
+                    "success": False,
+                    "face_detected": False,
+                    "error": face_error,
+                }
+            ), 400
 
-        results = detector.process(
-            rgb_image
+        face_height, face_width = (
+            face_crop.shape[:2]
         )
 
         return jsonify(
             {
                 "success": True,
-                "face_detected": bool(
-                    results.detections
-                ),
+                "face_detected": True,
+                "face_width": face_width,
+                "face_height": face_height,
             }
         ), 200
 
@@ -1022,10 +1196,12 @@ def detect_face():
         print(
             (
                 "Face detection error: "
-                f"{error}"
+                f"{repr(error)}"
             ),
             flush=True,
         )
+
+        traceback.print_exc()
 
         return jsonify(
             {
@@ -1038,72 +1214,155 @@ def detect_face():
 
 
 # ---------------------------------------------------------
-# Register student
+# Student registration
 # ---------------------------------------------------------
 @app.route(
     "/register",
     methods=["POST"],
 )
 def register_student():
-    student_name = request.form.get(
-        "student_name"
+    student_name = (
+        request.form.get(
+            "student_name",
+            ""
+        ).strip()
     )
 
-    student_id = request.form.get(
-        "student_id"
+    student_id = (
+        request.form.get(
+            "student_id",
+            ""
+        ).strip()
     )
 
-    image = request.files.get(
+    uploaded_image = request.files.get(
         "image"
     )
 
     if (
         not student_name
         or not student_id
-        or not image
+        or not uploaded_image
     ):
         return jsonify(
             {
                 "success": False,
                 "error": (
-                    "Missing required fields"
+                    "Student name, student ID, "
+                    "and image are required"
                 ),
             }
         ), 400
 
-    blob_name = None
+    uploaded_blob_name = None
 
     try:
-        blob_name = upload_face_image(
-            image,
-            student_id,
-            "Default",
+        image_bytes = (
+            uploaded_image.read()
+        )
+
+        image_array = np.frombuffer(
+            image_bytes,
+            np.uint8,
+        )
+
+        image = cv2.imdecode(
+            image_array,
+            cv2.IMREAD_COLOR,
+        )
+
+        if image is None:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Uploaded image could "
+                        "not be decoded"
+                    ),
+                }
+            ), 400
+
+        _, face_error = (
+            extract_face_with_mediapipe(
+                image
+            )
+        )
+
+        if face_error:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": face_error,
+                }
+            ), 400
+
+        uploaded_image.stream.seek(0)
+
+        uploaded_blob_name = (
+            upload_face_image(
+                uploaded_image,
+                student_id,
+                "primary",
+            )
         )
 
         with engine.begin() as connection:
+            existing_student = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT student_id
+                        FROM students
+                        WHERE student_id =
+                              :student_id
+                        """
+                    ),
+                    {
+                        "student_id": student_id,
+                    },
+                ).first()
+            )
+
+            if existing_student:
+                delete_blob_if_exists(
+                    uploaded_blob_name
+                )
+
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": (
+                            "A student with this "
+                            "ID already exists"
+                        ),
+                    }
+                ), 409
+
             connection.execute(
                 text(
                     """
                     INSERT INTO students
                         (
-                            student_name,
                             student_id,
+                            student_name,
                             image_path
                         )
                     VALUES
                         (
-                            :student_name,
                             :student_id,
+                            :student_name,
                             :image_path
                         )
                     """
                 ),
                 {
+                    "student_id": student_id,
                     "student_name": (
                         student_name
                     ),
-                    "student_id": student_id,
-                    "image_path": blob_name,
+                    "image_path": (
+                        uploaded_blob_name
+                    ),
                 },
             )
 
@@ -1126,9 +1385,11 @@ def register_student():
                 ),
                 {
                     "student_id": student_id,
-                    "image_path": blob_name,
+                    "image_path": (
+                        uploaded_blob_name
+                    ),
                     "appearance_label": (
-                        "Default"
+                        "Primary"
                     ),
                 },
             )
@@ -1136,33 +1397,55 @@ def register_student():
         return jsonify(
             {
                 "success": True,
-                "image_blob": blob_name,
+                "message": (
+                    "Student registered "
+                    "successfully"
+                ),
+                "student_id": student_id,
+                "student_name": student_name,
             }
         ), 201
 
-    except IntegrityError:
-        delete_blob_if_exists(
-            blob_name
+    except IntegrityError as error:
+        if uploaded_blob_name:
+            delete_blob_if_exists(
+                uploaded_blob_name
+            )
+
+        print(
+            (
+                "Registration integrity "
+                f"error: {error}"
+            ),
+            flush=True,
         )
 
         return jsonify(
             {
                 "success": False,
                 "error": (
-                    "Student ID already exists"
+                    "Student could not be "
+                    "registered because the "
+                    "record already exists"
                 ),
             }
-        ), 400
+        ), 409
 
     except Exception as error:
-        delete_blob_if_exists(
-            blob_name
-        )
+        if uploaded_blob_name:
+            delete_blob_if_exists(
+                uploaded_blob_name
+            )
 
         print(
-            f"Registration error: {error}",
+            (
+                "Registration error: "
+                f"{repr(error)}"
+            ),
             flush=True,
         )
+
+        traceback.print_exc()
 
         return jsonify(
             {
@@ -1175,57 +1458,68 @@ def register_student():
 
 
 # ---------------------------------------------------------
-# Alternate appearances
+# Alternate appearance
 # ---------------------------------------------------------
 @app.route(
     "/add-appearance",
     methods=["POST"],
 )
 def add_appearance():
-    student_id = request.form.get(
-        "student_id"
+    student_id = (
+        request.form.get(
+            "student_id",
+            ""
+        ).strip()
     )
 
     appearance_label = (
         request.form.get(
-            "appearance_label"
-        )
-        or "Alternate"
+            "appearance_label",
+            ""
+        ).strip()
     )
 
-    image = request.files.get(
+    uploaded_image = request.files.get(
         "image"
     )
 
-    if not student_id or not image:
+    if (
+        not student_id
+        or not appearance_label
+        or not uploaded_image
+    ):
         return jsonify(
             {
                 "success": False,
                 "error": (
-                    "Missing student ID or image"
+                    "Student ID, appearance "
+                    "label, and image are "
+                    "required"
                 ),
             }
         ), 400
 
-    blob_name = None
+    uploaded_blob_name = None
 
     try:
         with engine.connect() as connection:
-            student = connection.execute(
-                text(
-                    """
-                    SELECT student_id
-                    FROM students
-                    WHERE student_id =
-                          :student_id
-                    """
-                ),
-                {
-                    "student_id": student_id,
-                },
-            ).first()
+            student_exists = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT student_id
+                        FROM students
+                        WHERE student_id =
+                              :student_id
+                        """
+                    ),
+                    {
+                        "student_id": student_id,
+                    },
+                ).first()
+            )
 
-        if not student:
+        if not student_exists:
             return jsonify(
                 {
                     "success": False,
@@ -1235,10 +1529,53 @@ def add_appearance():
                 }
             ), 404
 
-        blob_name = upload_face_image(
-            image,
-            student_id,
-            appearance_label,
+        image_bytes = (
+            uploaded_image.read()
+        )
+
+        image_array = np.frombuffer(
+            image_bytes,
+            np.uint8,
+        )
+
+        image = cv2.imdecode(
+            image_array,
+            cv2.IMREAD_COLOR,
+        )
+
+        if image is None:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Uploaded image could "
+                        "not be decoded"
+                    ),
+                }
+            ), 400
+
+        _, face_error = (
+            extract_face_with_mediapipe(
+                image
+            )
+        )
+
+        if face_error:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": face_error,
+                }
+            ), 400
+
+        uploaded_image.stream.seek(0)
+
+        uploaded_blob_name = (
+            upload_face_image(
+                uploaded_image,
+                student_id,
+                appearance_label,
+            )
         )
 
         with engine.begin() as connection:
@@ -1261,7 +1598,9 @@ def add_appearance():
                 ),
                 {
                     "student_id": student_id,
-                    "image_path": blob_name,
+                    "image_path": (
+                        uploaded_blob_name
+                    ),
                     "appearance_label": (
                         appearance_label
                     ),
@@ -1271,28 +1610,39 @@ def add_appearance():
         return jsonify(
             {
                 "success": True,
-                "image_blob": blob_name,
+                "message": (
+                    "Alternate appearance "
+                    "added successfully"
+                ),
+                "student_id": student_id,
+                "appearance_label": (
+                    appearance_label
+                ),
             }
         ), 201
 
     except Exception as error:
-        delete_blob_if_exists(
-            blob_name
-        )
+        if uploaded_blob_name:
+            delete_blob_if_exists(
+                uploaded_blob_name
+            )
 
         print(
             (
                 "Add appearance error: "
-                f"{error}"
+                f"{repr(error)}"
             ),
             flush=True,
         )
+
+        traceback.print_exc()
 
         return jsonify(
             {
                 "success": False,
                 "error": (
-                    "Could not add appearance"
+                    "Could not add alternate "
+                    "appearance"
                 ),
             }
         ), 500
@@ -1308,31 +1658,48 @@ def add_appearance():
 def get_students():
     try:
         with engine.connect() as connection:
-            rows = connection.execute(
-                text(
-                    """
-                    SELECT
-                        student_id,
-                        student_name
-                    FROM students
-                    ORDER BY student_name ASC
-                    """
-                )
-            ).mappings().all()
+            students = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            students.student_id,
+                            students.student_name,
+                            students.image_path,
+                            COUNT(
+                                student_images.id
+                            ) AS appearance_count
+                        FROM students
+                        LEFT JOIN student_images
+                            ON students.student_id =
+                               student_images.student_id
+                        GROUP BY
+                            students.student_id,
+                            students.student_name,
+                            students.image_path
+                        ORDER BY
+                            students.student_name ASC
+                        """
+                    )
+                ).mappings().all()
+            )
 
         return jsonify(
             {
                 "success": True,
                 "students": [
-                    serialize_row(row)
-                    for row in rows
+                    serialize_row(student)
+                    for student in students
                 ],
             }
         ), 200
 
     except SQLAlchemyError as error:
         print(
-            f"Get students error: {error}",
+            (
+                "Get students error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1359,16 +1726,31 @@ def create_class():
         or request.form
     )
 
-    course_name = data.get(
-        "course_name"
+    course_name = (
+        str(
+            data.get(
+                "course_name",
+                ""
+            )
+        ).strip()
     )
 
-    course_code = data.get(
-        "course_code"
+    course_code = (
+        str(
+            data.get(
+                "course_code",
+                ""
+            )
+        ).strip()
     )
 
-    professor_name = data.get(
-        "professor_name"
+    professor_name = (
+        str(
+            data.get(
+                "professor_name",
+                ""
+            )
+        ).strip()
     )
 
     if (
@@ -1380,14 +1762,16 @@ def create_class():
             {
                 "success": False,
                 "error": (
-                    "Missing required fields"
+                    "Course name, course code, "
+                    "and professor name are "
+                    "required"
                 ),
             }
         ), 400
 
     try:
         with engine.begin() as connection:
-            class_id = connection.execute(
+            result = connection.execute(
                 text(
                     """
                     INSERT INTO classes
@@ -1406,18 +1790,29 @@ def create_class():
                     """
                 ),
                 {
-                    "course_name": course_name,
-                    "course_code": course_code,
+                    "course_name": (
+                        course_name
+                    ),
+                    "course_code": (
+                        course_code
+                    ),
                     "professor_name": (
                         professor_name
                     ),
                 },
-            ).scalar_one()
+            )
+
+            class_id = result.scalar_one()
 
         return jsonify(
             {
                 "success": True,
                 "class_id": class_id,
+                "course_name": course_name,
+                "course_code": course_code,
+                "professor_name": (
+                    professor_name
+                ),
             }
         ), 201
 
@@ -1426,14 +1821,18 @@ def create_class():
             {
                 "success": False,
                 "error": (
-                    "Course code already exists"
+                    "A class with this course "
+                    "code already exists"
                 ),
             }
-        ), 400
+        ), 409
 
     except SQLAlchemyError as error:
         print(
-            f"Create class error: {error}",
+            (
+                "Create class error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1458,12 +1857,24 @@ def get_classes():
                 text(
                     """
                     SELECT
-                        id,
-                        course_name,
-                        course_code,
-                        professor_name
+                        classes.id,
+                        classes.course_name,
+                        classes.course_code,
+                        classes.professor_name,
+                        COUNT(
+                            class_students.student_id
+                        ) AS student_count
                     FROM classes
-                    ORDER BY id DESC
+                    LEFT JOIN class_students
+                        ON classes.id =
+                           class_students.class_id
+                    GROUP BY
+                        classes.id,
+                        classes.course_name,
+                        classes.course_code,
+                        classes.professor_name
+                    ORDER BY
+                        classes.course_code ASC
                     """
                 )
             ).mappings().all()
@@ -1480,7 +1891,10 @@ def get_classes():
 
     except SQLAlchemyError as error:
         print(
-            f"Get classes error: {error}",
+            (
+                "Get classes error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1495,7 +1909,7 @@ def get_classes():
 
 
 # ---------------------------------------------------------
-# Class students
+# Class enrollment
 # ---------------------------------------------------------
 @app.route(
     "/class-students",
@@ -1511,8 +1925,13 @@ def add_student_to_class():
         "class_id"
     )
 
-    student_id = data.get(
-        "student_id"
+    student_id = (
+        str(
+            data.get(
+                "student_id",
+                ""
+            )
+        ).strip()
     )
 
     if not class_id or not student_id:
@@ -1520,7 +1939,8 @@ def add_student_to_class():
             {
                 "success": False,
                 "error": (
-                    "Missing class ID or student ID"
+                    "Class ID and student ID "
+                    "are required"
                 ),
             }
         ), 400
@@ -1528,7 +1948,10 @@ def add_student_to_class():
     try:
         class_id = int(class_id)
 
-    except ValueError:
+    except (
+        TypeError,
+        ValueError,
+    ):
         return jsonify(
             {
                 "success": False,
@@ -1538,18 +1961,20 @@ def add_student_to_class():
 
     try:
         with engine.begin() as connection:
-            class_exists = connection.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM classes
-                    WHERE id = :class_id
-                    """
-                ),
-                {
-                    "class_id": class_id,
-                },
-            ).first()
+            class_exists = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM classes
+                        WHERE id = :class_id
+                        """
+                    ),
+                    {
+                        "class_id": class_id,
+                    },
+                ).first()
+            )
 
             if not class_exists:
                 return jsonify(
@@ -1572,9 +1997,7 @@ def add_student_to_class():
                         """
                     ),
                     {
-                        "student_id": (
-                            student_id
-                        ),
+                        "student_id": student_id,
                     },
                 ).first()
             )
@@ -1613,6 +2036,9 @@ def add_student_to_class():
         return jsonify(
             {
                 "success": True,
+                "message": (
+                    "Student added to class"
+                ),
             }
         ), 201
 
@@ -1625,11 +2051,14 @@ def add_student_to_class():
                     "in this class"
                 ),
             }
-        ), 400
+        ), 409
 
     except SQLAlchemyError as error:
         print(
-            f"Enrollment error: {error}",
+            (
+                "Add class student error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1637,7 +2066,8 @@ def add_student_to_class():
             {
                 "success": False,
                 "error": (
-                    "Could not enroll student"
+                    "Could not add student "
+                    "to class"
                 ),
             }
         ), 500
@@ -1655,7 +2085,8 @@ def get_class_students(class_id):
                     """
                     SELECT
                         students.student_id,
-                        students.student_name
+                        students.student_name,
+                        students.image_path
                     FROM class_students
                     JOIN students
                         ON class_students.student_id =
@@ -1694,7 +2125,8 @@ def get_class_students(class_id):
             {
                 "success": False,
                 "error": (
-                    "Could not load class students"
+                    "Could not load class "
+                    "students"
                 ),
             }
         ), 500
@@ -1703,7 +2135,8 @@ def get_class_students(class_id):
 @app.route(
     (
         "/class-students/"
-        "<int:class_id>/<student_id>"
+        "<int:class_id>/"
+        "<string:student_id>"
     ),
     methods=["DELETE"],
 )
@@ -1728,18 +2161,29 @@ def remove_student_from_class(
                 },
             )
 
+        if result.rowcount == 0:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Enrollment not found"
+                    ),
+                }
+            ), 404
+
         return jsonify(
             {
                 "success": True,
-                "removed": (
-                    result.rowcount > 0
-                ),
+                "deleted": True,
             }
         ), 200
 
     except SQLAlchemyError as error:
         print(
-            f"Remove student error: {error}",
+            (
+                "Remove class student error: "
+                f"{error}"
+            ),
             flush=True,
         )
 
@@ -1747,42 +2191,45 @@ def remove_student_from_class(
             {
                 "success": False,
                 "error": (
-                    "Could not remove student"
+                    "Could not remove student "
+                    "from class"
                 ),
             }
         ), 500
-
-
 # ---------------------------------------------------------
-# Face recognition
+# Face recognition and attendance marking
 # ---------------------------------------------------------
 @app.route(
     "/recognize",
     methods=["POST"],
 )
 def recognize_student():
-    if "image" not in request.files:
+    class_id = request.form.get(
+        "class_id"
+    )
+
+    uploaded_image = request.files.get(
+        "image"
+    )
+
+    if not class_id or not uploaded_image:
         return jsonify(
             {
                 "success": False,
-                "error": "No image uploaded",
-            }
-        ), 400
-
-    class_id = request.form.get("class_id")
-
-    if not class_id:
-        return jsonify(
-            {
-                "success": False,
-                "error": "Please select a class",
+                "error": (
+                    "Class ID and captured "
+                    "image are required"
+                ),
             }
         ), 400
 
     try:
         class_id = int(class_id)
 
-    except (ValueError, TypeError):
+    except (
+        TypeError,
+        ValueError,
+    ):
         return jsonify(
             {
                 "success": False,
@@ -1790,18 +2237,24 @@ def recognize_student():
             }
         ), 400
 
+    new_attendance_blob = None
+    old_attendance_blob = None
+
     try:
         # -------------------------------------------------
-        # Read and decode the uploaded recognition image
+        # Read and decode the webcam image
         # -------------------------------------------------
-        uploaded_image = request.files["image"]
-        uploaded_bytes = uploaded_image.read()
+        uploaded_bytes = (
+            uploaded_image.read()
+        )
 
         if not uploaded_bytes:
             return jsonify(
                 {
                     "success": False,
-                    "error": "Uploaded image is empty",
+                    "error": (
+                        "Captured image is empty"
+                    ),
                 }
             ), 400
 
@@ -1819,28 +2272,23 @@ def recognize_student():
             return jsonify(
                 {
                     "success": False,
-                    "error": "Uploaded image could not be read",
+                    "error": (
+                        "Captured image could "
+                        "not be decoded"
+                    ),
                 }
             ), 400
-
-        print(
-            f"Uploaded image shape: {test_image.shape}",
-            flush=True,
-        )
 
         # -------------------------------------------------
         # Detect and crop the uploaded face
         # -------------------------------------------------
         test_face, face_error = (
-            extract_face_with_mediapipe(test_image)
+            extract_face_with_mediapipe(
+                test_image
+            )
         )
 
-        if test_face is None:
-            print(
-                f"Uploaded face rejected: {face_error}",
-                flush=True,
-            )
-
+        if face_error:
             return jsonify(
                 {
                     "success": False,
@@ -1848,185 +2296,256 @@ def recognize_student():
                 }
             ), 400
 
-        print(
-            f"Uploaded face crop shape: {test_face.shape}",
-            flush=True,
-        )
-
         # -------------------------------------------------
-        # Load all appearance images for students enrolled
-        # in the selected class
+        # Confirm that the selected class exists
         # -------------------------------------------------
         with engine.connect() as connection:
-            students = connection.execute(
-                text(
-                    """
-                    SELECT
-                        students.student_name,
-                        students.student_id,
-                        student_images.image_path
-                    FROM students
-                    JOIN student_images
-                        ON students.student_id =
-                           student_images.student_id
-                    JOIN class_students
-                        ON students.student_id =
-                           class_students.student_id
-                    WHERE class_students.class_id =
-                          :class_id
-                    """
-                ),
-                {
-                    "class_id": class_id,
-                },
-            ).mappings().all()
+            selected_class = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            id,
+                            course_code,
+                            course_name
+                        FROM classes
+                        WHERE id = :class_id
+                        """
+                    ),
+                    {
+                        "class_id": class_id,
+                    },
+                ).mappings().first()
+            )
 
-        if not students:
+        if not selected_class:
             return jsonify(
                 {
                     "success": False,
                     "error": (
-                        "No student appearance profiles "
-                        "found for this class"
+                        "Selected class "
+                        "was not found"
                     ),
                 }
-            ), 400
+            ), 404
+
+        # -------------------------------------------------
+        # Load every appearance belonging to students
+        # enrolled in the selected class
+        # -------------------------------------------------
+        with engine.connect() as connection:
+            appearance_rows = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            students.student_id,
+                            students.student_name,
+                            student_images.image_path,
+                            student_images.appearance_label
+                        FROM class_students
+                        JOIN students
+                            ON class_students.student_id =
+                               students.student_id
+                        JOIN student_images
+                            ON students.student_id =
+                               student_images.student_id
+                        WHERE class_students.class_id =
+                              :class_id
+
+                        UNION ALL
+
+                        SELECT
+                            students.student_id,
+                            students.student_name,
+                            students.image_path,
+                            'Primary'
+                                AS appearance_label
+                        FROM class_students
+                        JOIN students
+                            ON class_students.student_id =
+                               students.student_id
+                        WHERE class_students.class_id =
+                              :class_id
+                          AND students.image_path
+                              IS NOT NULL
+                          AND NOT EXISTS
+                              (
+                                  SELECT 1
+                                  FROM student_images
+                                  WHERE
+                                      student_images.student_id =
+                                      students.student_id
+                                    AND
+                                      student_images.image_path =
+                                      students.image_path
+                              )
+
+                        ORDER BY
+                            student_name,
+                            student_id
+                        """
+                    ),
+                    {
+                        "class_id": class_id,
+                    },
+                ).mappings().all()
+            )
+
+        if not appearance_rows:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "No students with stored "
+                        "face images are enrolled "
+                        "in this class"
+                    ),
+                }
+            ), 404
 
         deepface = get_deepface()
 
-        # -------------------------------------------------
-        # Track the best appearance match for each student
-        # -------------------------------------------------
-        student_best_matches = {}
-
-        # Start with 0.45 because cropped faces may have
-        # slightly different distances than full images.
-        # Adjust after testing real images.
         match_threshold = 0.45
 
-        for student in students:
-            student_name = student["student_name"]
-            student_id = student["student_id"]
-            blob_name = student["image_path"]
+        student_best_matches = {}
+
+        # -------------------------------------------------
+        # Compare the captured face with every stored
+        # appearance and keep only the best appearance
+        # for each student.
+        # -------------------------------------------------
+        for appearance in appearance_rows:
+            stored_blob_name = (
+                appearance["image_path"]
+            )
+
+            if not stored_blob_name:
+                continue
 
             try:
-                print(
-                    f"Checking blob: {blob_name}",
-                    flush=True,
-                )
-
-                stored_image = download_blob_as_image(
-                    blob_name
-                )
-
-                if stored_image is None:
-                    print(
-                        (
-                            "Could not decode stored image "
-                            f"for {student_id}"
-                        ),
-                        flush=True,
+                stored_image = (
+                    download_blob_as_image(
+                        stored_blob_name
                     )
-                    continue
-
-                print(
-                    (
-                        f"Stored image shape for "
-                        f"{student_id}: {stored_image.shape}"
-                    ),
-                    flush=True,
                 )
 
-                # Detect and crop the stored registration
-                # or alternate-appearance image
-                stored_face, stored_face_error = (
+                stored_face, stored_error = (
                     extract_face_with_mediapipe(
                         stored_image
                     )
                 )
 
-                if stored_face is None:
+                if stored_error:
                     print(
                         (
-                            f"Stored image rejected for "
-                            f"{student_id}: "
-                            f"{stored_face_error}"
+                            "Skipping stored image "
+                            f"{stored_blob_name}: "
+                            f"{stored_error}"
                         ),
                         flush=True,
                     )
+
                     continue
 
-                print(
-                    (
-                        f"Stored face crop shape for "
-                        f"{student_id}: "
-                        f"{stored_face.shape}"
-                    ),
-                    flush=True,
-                )
+                verification_result = (
+                    deepface.verify(
+                        img1_path=test_face,
+                        img2_path=stored_face,
 
-                # MediaPipe already detected and cropped
-                # both images, so DeepFace only creates
-                # and compares embeddings.
-                result = deepface.verify(
-                    img1_path=test_face,
-                    img2_path=stored_face,
-                    model_name="VGG-Face",
-                    detector_backend="skip",
-                    distance_metric="cosine",
-                    enforce_detection=False,
-                    align=False,
-                    silent=True,
+                        model_name=(
+                            "VGG-Face"
+                        ),
+
+                        detector_backend=(
+                            "skip"
+                        ),
+
+                        distance_metric=(
+                            "cosine"
+                        ),
+
+                        enforce_detection=False,
+
+                        align=False,
+
+                        silent=True,
+                    )
                 )
 
                 distance = float(
-                    result["distance"]
+                    verification_result.get(
+                        "distance",
+                        float("inf"),
+                    )
+                )
+
+                student_id = (
+                    appearance["student_id"]
                 )
 
                 print(
                     (
-                        f"DeepFace result for "
-                        f"{student_id}: "
-                        f"distance={distance:.6f}, "
-                        f"default_threshold="
-                        f"{result.get('threshold')}"
+                        "Compared against "
+                        f"{student_id} "
+                        f"({appearance['appearance_label']}): "
+                        f"distance={distance:.6f}"
                     ),
                     flush=True,
                 )
 
-                # Keep the lowest distance among all
-                # appearance images belonging to this
-                # particular student.
-                existing_match = (
+                current_best = (
                     student_best_matches.get(
                         student_id
                     )
                 )
 
                 if (
-                    existing_match is None
+                    current_best is None
                     or distance
-                    < existing_match["distance"]
+                    < current_best["distance"]
                 ):
                     student_best_matches[
                         student_id
                     ] = {
-                        "student_name": student_name,
-                        "student_id": student_id,
-                        "distance": distance,
-                        "image_path": blob_name,
+                        "student_id": (
+                            student_id
+                        ),
+
+                        "student_name": (
+                            appearance[
+                                "student_name"
+                            ]
+                        ),
+
+                        "distance": (
+                            distance
+                        ),
+
+                        "appearance_label": (
+                            appearance[
+                                "appearance_label"
+                            ]
+                        ),
+
+                        "image_path": (
+                            stored_blob_name
+                        ),
                     }
 
-            except Exception as error:
+            except Exception as comparison_error:
                 print(
                     (
-                        f"Recognition error for "
-                        f"{student_id}: {repr(error)}"
+                        "Could not compare stored "
+                        f"appearance "
+                        f"{stored_blob_name}: "
+                        f"{repr(comparison_error)}"
                     ),
                     flush=True,
                 )
 
                 traceback.print_exc()
+
                 continue
 
         # -------------------------------------------------
@@ -2034,7 +2553,9 @@ def recognize_student():
         # -------------------------------------------------
         ranked_matches = sorted(
             student_best_matches.values(),
-            key=lambda match: match["distance"],
+            key=lambda match: (
+                match["distance"]
+            ),
         )
 
         if not ranked_matches:
@@ -2049,18 +2570,23 @@ def recognize_student():
             ), 404
 
         best_match = ranked_matches[0]
-        best_distance = best_match["distance"]
+
+        best_distance = (
+            best_match["distance"]
+        )
 
         second_best_distance = None
 
         if len(ranked_matches) > 1:
             second_best_distance = (
-                ranked_matches[1]["distance"]
+                ranked_matches[1][
+                    "distance"
+                ]
             )
 
         print(
             (
-                f"Best match: "
+                "Best match: "
                 f"{best_match['student_id']}, "
                 f"distance={best_distance:.6f}"
             ),
@@ -2070,14 +2596,14 @@ def recognize_student():
         if second_best_distance is not None:
             print(
                 (
-                    f"Second-best distance: "
+                    "Second-best distance: "
                     f"{second_best_distance:.6f}"
                 ),
                 flush=True,
             )
 
         # -------------------------------------------------
-        # Reject when the closest student is still too far
+        # Reject when even the closest match is too far
         # -------------------------------------------------
         if best_distance > match_threshold:
             return jsonify(
@@ -2091,13 +2617,15 @@ def recognize_student():
                         best_distance,
                         4,
                     ),
-                    "threshold": match_threshold,
+                    "threshold": (
+                        match_threshold
+                    ),
                 }
             ), 404
 
-        # Optional ambiguity protection:
-        # Reject when two different students are nearly
-        # equally close.
+        # -------------------------------------------------
+        # Reject when two students are almost equally close
+        # -------------------------------------------------
         minimum_distance_gap = 0.03
 
         if (
@@ -2134,117 +2662,306 @@ def recognize_student():
                 }
             ), 409
 
-        student_name = best_match[
-            "student_name"
-        ]
+        student_name = (
+            best_match["student_name"]
+        )
 
-        student_id = best_match[
-            "student_id"
-        ]
+        student_id = (
+            best_match["student_id"]
+        )
 
         # -------------------------------------------------
-        # Mark attendance
+        # Normalize the captured photo to JPEG before
+        # uploading it to Azure Blob Storage.
+        # -------------------------------------------------
+        encoding_success, jpeg_buffer = (
+            cv2.imencode(
+                ".jpg",
+                test_image,
+                [
+                    cv2.IMWRITE_JPEG_QUALITY,
+                    92,
+                ],
+            )
+        )
+
+        if not encoding_success:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Attendance photo could "
+                        "not be prepared"
+                    ),
+                }
+            ), 500
+
+        attendance_photo_bytes = (
+            jpeg_buffer.tobytes()
+        )
+
+        new_attendance_blob = (
+            upload_attendance_photo(
+                attendance_photo_bytes,
+                class_id,
+                student_id,
+            )
+        )
+
+        # -------------------------------------------------
+        # Insert or update today's attendance record
         # -------------------------------------------------
         current_time = datetime.now(
             timezone.utc
         )
 
-        attendance_date = current_time.date()
+        attendance_date = (
+            current_time.date()
+        )
 
-        with engine.begin() as connection:
-            existing_record = connection.execute(
-                text(
-                    """
-                    SELECT id
-                    FROM attendance
-                    WHERE class_id = :class_id
-                      AND student_id = :student_id
-                      AND CAST(timestamp AS DATE) =
-                          :attendance_date
-                    LIMIT 1
-                    """
-                ),
-                {
-                    "class_id": class_id,
-                    "student_id": student_id,
-                    "attendance_date": attendance_date,
-                },
-            ).first()
+        attendance_id = None
+        attendance_was_updated = False
 
-            if existing_record:
-                connection.execute(
-                    text(
-                        """
-                        UPDATE attendance
-                        SET
-                            student_name = :student_name,
-                            timestamp = :timestamp,
-                            status = 'Present'
-                        WHERE id = :attendance_id
-                        """
-                    ),
-                    {
-                        "student_name": student_name,
-                        "timestamp": current_time,
-                        "attendance_id": (
-                            existing_record[0]
+        try:
+            with engine.begin() as connection:
+                existing_record = (
+                    connection.execute(
+                        text(
+                            """
+                            SELECT
+                                id,
+                                attendance_photo_path
+                            FROM attendance
+                            WHERE class_id =
+                                  :class_id
+                              AND student_id =
+                                  :student_id
+                              AND CAST(
+                                  timestamp AS DATE
+                              ) = :attendance_date
+                            LIMIT 1
+                            """
                         ),
-                    },
+                        {
+                            "class_id": (
+                                class_id
+                            ),
+                            "student_id": (
+                                student_id
+                            ),
+                            "attendance_date": (
+                                attendance_date
+                            ),
+                        },
+                    ).mappings().first()
                 )
 
-            else:
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO attendance
-                            (
-                                class_id,
-                                student_id,
-                                student_name,
-                                timestamp,
-                                status
-                            )
-                        VALUES
-                            (
-                                :class_id,
-                                :student_id,
-                                :student_name,
-                                :timestamp,
-                                :status
-                            )
-                        """
-                    ),
-                    {
-                        "class_id": class_id,
-                        "student_id": student_id,
-                        "student_name": student_name,
-                        "timestamp": current_time,
-                        "status": "Present",
-                    },
-                )
+                if existing_record:
+                    attendance_id = (
+                        existing_record["id"]
+                    )
+
+                    old_attendance_blob = (
+                        existing_record[
+                            "attendance_photo_path"
+                        ]
+                    )
+
+                    connection.execute(
+                        text(
+                            """
+                            UPDATE attendance
+                            SET
+                                student_name =
+                                    :student_name,
+                                timestamp =
+                                    :timestamp,
+                                status =
+                                    'Present',
+                                attendance_photo_path =
+                                    :attendance_photo_path,
+                                recognition_distance =
+                                    :recognition_distance
+                            WHERE id =
+                                  :attendance_id
+                            """
+                        ),
+                        {
+                            "student_name": (
+                                student_name
+                            ),
+
+                            "timestamp": (
+                                current_time
+                            ),
+
+                            "attendance_photo_path": (
+                                new_attendance_blob
+                            ),
+
+                            "recognition_distance": (
+                                best_distance
+                            ),
+
+                            "attendance_id": (
+                                attendance_id
+                            ),
+                        },
+                    )
+
+                    attendance_was_updated = True
+
+                else:
+                    attendance_id = (
+                        connection.execute(
+                            text(
+                                """
+                                INSERT INTO attendance
+                                    (
+                                        class_id,
+                                        student_id,
+                                        student_name,
+                                        timestamp,
+                                        status,
+                                        attendance_photo_path,
+                                        recognition_distance
+                                    )
+                                VALUES
+                                    (
+                                        :class_id,
+                                        :student_id,
+                                        :student_name,
+                                        :timestamp,
+                                        :status,
+                                        :attendance_photo_path,
+                                        :recognition_distance
+                                    )
+                                RETURNING id
+                                """
+                            ),
+                            {
+                                "class_id": (
+                                    class_id
+                                ),
+
+                                "student_id": (
+                                    student_id
+                                ),
+
+                                "student_name": (
+                                    student_name
+                                ),
+
+                                "timestamp": (
+                                    current_time
+                                ),
+
+                                "status": (
+                                    "Present"
+                                ),
+
+                                "attendance_photo_path": (
+                                    new_attendance_blob
+                                ),
+
+                                "recognition_distance": (
+                                    best_distance
+                                ),
+                            },
+                        ).scalar_one()
+                    )
+
+        except Exception:
+            # The database update failed, so remove the
+            # newly uploaded attendance image.
+            delete_blob_if_exists(
+                new_attendance_blob
+            )
+
+            new_attendance_blob = None
+
+            raise
+
+        # Delete the previous attendance photo only after
+        # the new database transaction completed.
+        if (
+            old_attendance_blob
+            and old_attendance_blob
+            != new_attendance_blob
+        ):
+            delete_blob_if_exists(
+                old_attendance_blob
+            )
 
         return jsonify(
             {
                 "success": True,
-                "student_name": student_name,
-                "student_id": student_id,
-                "class_id": class_id,
+
+                "student_name": (
+                    student_name
+                ),
+
+                "student_id": (
+                    student_id
+                ),
+
+                "class_id": (
+                    class_id
+                ),
+
+                "attendance_id": (
+                    attendance_id
+                ),
+
                 "attendance_marked": True,
+
+                "attendance_updated": (
+                    attendance_was_updated
+                ),
+
                 "status": "Present",
+
                 "distance": round(
                     best_distance,
                     4,
                 ),
-                "threshold": match_threshold,
+
+                "threshold": (
+                    match_threshold
+                ),
+
+                "matched_appearance": (
+                    best_match[
+                        "appearance_label"
+                    ]
+                ),
+
+                "attendance_photo_available": (
+                    True
+                ),
+
+                "attendance_photo_url": (
+                    f"/attendance/"
+                    f"{attendance_id}/photo"
+                ),
+
                 "timestamp": (
                     current_time.isoformat()
                 ),
             }
         ), 200
 
-    except Exception as error:
+    except ResourceNotFoundError as error:
+        if new_attendance_blob:
+            delete_blob_if_exists(
+                new_attendance_blob
+            )
+
         print(
-            f"Recognition route error: {repr(error)}",
+            (
+                "Recognition storage error: "
+                f"{repr(error)}"
+            ),
             flush=True,
         )
 
@@ -2253,7 +2970,197 @@ def recognize_student():
         return jsonify(
             {
                 "success": False,
-                "error": "Face recognition failed",
+                "error": (
+                    "A stored face image could "
+                    "not be loaded"
+                ),
+            }
+        ), 500
+
+    except Exception as error:
+        if new_attendance_blob:
+            # This is safe even when the blob was already
+            # removed during database error handling.
+            delete_blob_if_exists(
+                new_attendance_blob
+            )
+
+        print(
+            (
+                "Recognition route error: "
+                f"{repr(error)}"
+            ),
+            flush=True,
+        )
+
+        traceback.print_exc()
+
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    "Face recognition failed"
+                ),
+            }
+        ), 500
+
+
+# ---------------------------------------------------------
+# View a captured attendance photo
+# ---------------------------------------------------------
+@app.route(
+    "/attendance/<int:attendance_id>/photo",
+    methods=["GET"],
+)
+def get_attendance_photo(
+    attendance_id,
+):
+    try:
+        with engine.connect() as connection:
+            attendance_record = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            attendance_photo_path
+                        FROM attendance
+                        WHERE id =
+                              :attendance_id
+                        """
+                    ),
+                    {
+                        "attendance_id": (
+                            attendance_id
+                        ),
+                    },
+                ).mappings().first()
+            )
+
+        if not attendance_record:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Attendance record "
+                        "not found"
+                    ),
+                }
+            ), 404
+
+        blob_name = (
+            attendance_record[
+                "attendance_photo_path"
+            ]
+        )
+
+        if not blob_name:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "No captured photo exists "
+                        "for this attendance record"
+                    ),
+                }
+            ), 404
+
+        blob_client = (
+            container_client
+            .get_blob_client(
+                blob_name
+            )
+        )
+
+        blob_download = (
+            blob_client.download_blob()
+        )
+
+        photo_bytes = (
+            blob_download.readall()
+        )
+
+        blob_properties = (
+            blob_client.get_blob_properties()
+        )
+
+        content_type = (
+            blob_properties
+            .content_settings
+            .content_type
+            or "image/jpeg"
+        )
+
+        response = Response(
+            photo_bytes,
+            status=200,
+            mimetype=content_type,
+        )
+
+        response.headers[
+            "Content-Disposition"
+        ] = (
+            "inline; "
+            f'filename="attendance_'
+            f'{attendance_id}.jpg"'
+        )
+
+        response.headers[
+            "Cache-Control"
+        ] = (
+            "private, no-store, "
+            "max-age=0"
+        )
+
+        return response
+
+    except ResourceNotFoundError:
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    "Attendance photo was not "
+                    "found in storage"
+                ),
+            }
+        ), 404
+
+    except SQLAlchemyError as error:
+        print(
+            (
+                "Attendance photo database "
+                f"error: {error}"
+            ),
+            flush=True,
+        )
+
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    "Could not load attendance "
+                    "photo information"
+                ),
+            }
+        ), 500
+
+    except Exception as error:
+        print(
+            (
+                "Attendance photo error: "
+                f"{repr(error)}"
+            ),
+            flush=True,
+        )
+
+        traceback.print_exc()
+
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    "Could not load attendance "
+                    "photo"
+                ),
             }
         ), 500
 # ---------------------------------------------------------
@@ -2324,6 +3231,8 @@ def get_attendance():
                         attendance.student_name,
                         attendance.timestamp,
                         attendance.status,
+                        attendance.attendance_photo_path,
+                        attendance.recognition_distance,
                         classes.course_code,
                         classes.course_name
                     FROM attendance
@@ -2348,13 +3257,42 @@ def get_attendance():
                 },
             ).mappings().all()
 
+        attendance_records = []
+
+        for row in rows:
+            serialized = serialize_row(
+                row
+            )
+
+            has_photo = bool(
+                row[
+                    "attendance_photo_path"
+                ]
+            )
+
+            serialized[
+                "attendance_photo_available"
+            ] = has_photo
+
+            serialized[
+                "attendance_photo_url"
+            ] = (
+                f"/attendance/"
+                f"{row['id']}/photo"
+                if has_photo
+                else None
+            )
+
+            attendance_records.append(
+                serialized
+            )
+
         return jsonify(
             {
                 "success": True,
-                "attendance": [
-                    serialize_row(row)
-                    for row in rows
-                ],
+                "attendance": (
+                    attendance_records
+                ),
             }
         ), 200
 
@@ -2457,9 +3395,13 @@ def dashboard_stats():
                 text(
                     """
                     SELECT
+                        id,
                         student_name,
                         student_id,
-                        timestamp
+                        timestamp,
+                        status,
+                        attendance_photo_path,
+                        recognition_distance
                     FROM attendance
                     WHERE CAST(
                         timestamp AS DATE
@@ -2474,6 +3416,32 @@ def dashboard_stats():
                     ),
                 },
             ).mappings().first()
+
+        latest_attendance = None
+
+        if latest:
+            latest_attendance = (
+                serialize_row(latest)
+            )
+
+            has_photo = bool(
+                latest[
+                    "attendance_photo_path"
+                ]
+            )
+
+            latest_attendance[
+                "attendance_photo_available"
+            ] = has_photo
+
+            latest_attendance[
+                "attendance_photo_url"
+            ] = (
+                f"/attendance/"
+                f"{latest['id']}/photo"
+                if has_photo
+                else None
+            )
 
         return jsonify(
             {
@@ -2491,9 +3459,7 @@ def dashboard_stats():
                     selected_date_attendance
                 ),
                 "latest_attendance": (
-                    serialize_row(latest)
-                    if latest
-                    else None
+                    latest_attendance
                 ),
             }
         ), 200
@@ -3268,7 +4234,9 @@ def export_attendance():
                         attendance.student_id,
                         attendance.student_name,
                         attendance.timestamp,
-                        attendance.status
+                        attendance.status,
+                        attendance.recognition_distance,
+                        attendance.id
                     FROM attendance
                     JOIN classes
                         ON attendance.class_id =
@@ -3323,14 +4291,26 @@ def export_attendance():
             "Student Name",
             "Timestamp",
             "Status",
+            "Recognition Distance",
+            "Attendance Photo URL",
         ]
     )
 
     for row in rows:
+        photo_url = (
+            f"/attendance/{row[7]}/photo"
+        )
+
         writer.writerow(
             [
-                serialize_value(value)
-                for value in row
+                serialize_value(row[0]),
+                serialize_value(row[1]),
+                serialize_value(row[2]),
+                serialize_value(row[3]),
+                serialize_value(row[4]),
+                serialize_value(row[5]),
+                serialize_value(row[6]),
+                photo_url,
             ]
         )
 
@@ -3760,7 +4740,9 @@ def update_excuse_status(excuse_id):
                                     student_id,
                                     student_name,
                                     timestamp,
-                                    status
+                                    status,
+                                    attendance_photo_path,
+                                    recognition_distance
                                 )
                             VALUES
                                 (
@@ -3768,7 +4750,9 @@ def update_excuse_status(excuse_id):
                                     :student_id,
                                     :student_name,
                                     :timestamp,
-                                    :status
+                                    :status,
+                                    NULL,
+                                    NULL
                                 )
                             """
                         ),
