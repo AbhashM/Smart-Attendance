@@ -1817,7 +1817,7 @@ def recognize_student():
                     model_name="VGG-Face",
                     detector_backend="mediapipe",
                     distance_metric="cosine",
-                    enforce_detection=True,
+                    enforce_detection=False,
                     align=True,
                     silent=True,
                 )
