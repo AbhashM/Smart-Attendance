@@ -781,6 +781,82 @@ def delete_blob_if_exists(blob_name):
             ),
             flush=True,
         )
+
+def extract_face_with_mediapipe(image):
+    """
+    Detect exactly one face and return a padded face crop.
+
+    Returns:
+        cropped_face, None
+        None, error_message
+    """
+
+    if image is None or image.size == 0:
+        return None, "Image could not be read"
+
+    image_height, image_width = image.shape[:2]
+
+    rgb_image = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2RGB,
+    )
+
+    with mp.solutions.face_detection.FaceDetection(
+        model_selection=1,
+        min_detection_confidence=0.60,
+    ) as face_detector:
+        results = face_detector.process(rgb_image)
+
+    detections = results.detections or []
+
+    if len(detections) == 0:
+        return None, "No face detected in uploaded image"
+
+    if len(detections) > 1:
+        return None, "Multiple faces detected. Please upload one face only"
+
+    detection = detections[0]
+
+    bounding_box = (
+        detection.location_data.relative_bounding_box
+    )
+
+    x = int(bounding_box.xmin * image_width)
+    y = int(bounding_box.ymin * image_height)
+    width = int(bounding_box.width * image_width)
+    height = int(bounding_box.height * image_height)
+
+    if width <= 0 or height <= 0:
+        return None, "Invalid face detected"
+
+    # Add padding so DeepFace receives the full face area
+    horizontal_padding = int(width * 0.25)
+    vertical_padding = int(height * 0.30)
+
+    x1 = max(0, x - horizontal_padding)
+    y1 = max(0, y - vertical_padding)
+    x2 = min(
+        image_width,
+        x + width + horizontal_padding,
+    )
+    y2 = min(
+        image_height,
+        y + height + vertical_padding,
+    )
+
+    face_crop = image[y1:y2, x1:x2]
+
+    if face_crop is None or face_crop.size == 0:
+        return None, "Face crop could not be created"
+
+    # Reject extremely small faces
+    face_height, face_width = face_crop.shape[:2]
+
+    if face_width < 80 or face_height < 80:
+        return None, "Face is too small or too far away"
+
+    return face_crop, None
+
 def download_blob_as_image(blob_name):
     blob_client = container_client.get_blob_client(
         blob_name
@@ -1696,7 +1772,7 @@ def recognize_student():
     try:
         class_id = int(class_id)
 
-    except ValueError:
+    except (ValueError, TypeError):
         return jsonify(
             {
                 "success": False,
@@ -1705,9 +1781,19 @@ def recognize_student():
         ), 400
 
     try:
-        # Read the newly uploaded recognition image
+        # -------------------------------------------------
+        # Read and decode the uploaded recognition image
+        # -------------------------------------------------
         uploaded_image = request.files["image"]
         uploaded_bytes = uploaded_image.read()
+
+        if not uploaded_bytes:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Uploaded image is empty",
+                }
+            ), 400
 
         uploaded_array = np.frombuffer(
             uploaded_bytes,
@@ -1732,7 +1818,35 @@ def recognize_student():
             flush=True,
         )
 
-        # Load students enrolled in the selected class
+        # -------------------------------------------------
+        # Detect and crop the uploaded face
+        # -------------------------------------------------
+        test_face, face_error = (
+            extract_face_with_mediapipe(test_image)
+        )
+
+        if test_face is None:
+            print(
+                f"Uploaded face rejected: {face_error}",
+                flush=True,
+            )
+
+            return jsonify(
+                {
+                    "success": False,
+                    "error": face_error,
+                }
+            ), 400
+
+        print(
+            f"Uploaded face crop shape: {test_face.shape}",
+            flush=True,
+        )
+
+        # -------------------------------------------------
+        # Load all appearance images for students enrolled
+        # in the selected class
+        # -------------------------------------------------
         with engine.connect() as connection:
             students = connection.execute(
                 text(
@@ -1770,14 +1884,16 @@ def recognize_student():
 
         deepface = get_deepface()
 
-        # Track the closest matching face across all students
-        best_match = None
-        best_distance = float("inf")
+        # -------------------------------------------------
+        # Track the best appearance match for each student
+        # -------------------------------------------------
+        student_best_matches = {}
 
-        # Lower number = stricter matching
-        match_threshold = 0.40
+        # Start with 0.45 because cropped faces may have
+        # slightly different distances than full images.
+        # Adjust after testing real images.
+        match_threshold = 0.45
 
-        # Compare uploaded image with every registered appearance
         for student in students:
             student_name = student["student_name"]
             student_id = student["student_id"]
@@ -1796,7 +1912,7 @@ def recognize_student():
                 if stored_image is None:
                     print(
                         (
-                            f"Could not decode stored image "
+                            "Could not decode stored image "
                             f"for {student_id}"
                         ),
                         flush=True,
@@ -1811,37 +1927,84 @@ def recognize_student():
                     flush=True,
                 )
 
-                result = deepface.verify(
-                    img1_path=test_image,
-                    img2_path=stored_image,
-                    model_name="VGG-Face",
-                    detector_backend="mediapipe",
-                    distance_metric="cosine",
-                    enforce_detection=False,
-                    align=True,
-                    silent=True,
+                # Detect and crop the stored registration
+                # or alternate-appearance image
+                stored_face, stored_face_error = (
+                    extract_face_with_mediapipe(
+                        stored_image
+                    )
                 )
 
-                distance = float(result["distance"])
+                if stored_face is None:
+                    print(
+                        (
+                            f"Stored image rejected for "
+                            f"{student_id}: "
+                            f"{stored_face_error}"
+                        ),
+                        flush=True,
+                    )
+                    continue
 
                 print(
                     (
-                        f"DeepFace result for {student_id}: "
-                        f"verified={result.get('verified')}, "
-                        f"distance={distance}, "
+                        f"Stored face crop shape for "
+                        f"{student_id}: "
+                        f"{stored_face.shape}"
+                    ),
+                    flush=True,
+                )
+
+                # MediaPipe already detected and cropped
+                # both images, so DeepFace only creates
+                # and compares embeddings.
+                result = deepface.verify(
+                    img1_path=test_face,
+                    img2_path=stored_face,
+                    model_name="VGG-Face",
+                    detector_backend="skip",
+                    distance_metric="cosine",
+                    enforce_detection=False,
+                    align=False,
+                    silent=True,
+                )
+
+                distance = float(
+                    result["distance"]
+                )
+
+                print(
+                    (
+                        f"DeepFace result for "
+                        f"{student_id}: "
+                        f"distance={distance:.6f}, "
                         f"default_threshold="
                         f"{result.get('threshold')}"
                     ),
                     flush=True,
                 )
 
-                # Keep only the closest student
-                if distance < best_distance:
-                    best_distance = distance
-                    best_match = {
+                # Keep the lowest distance among all
+                # appearance images belonging to this
+                # particular student.
+                existing_match = (
+                    student_best_matches.get(
+                        student_id
+                    )
+                )
+
+                if (
+                    existing_match is None
+                    or distance
+                    < existing_match["distance"]
+                ):
+                    student_best_matches[
+                        student_id
+                    ] = {
                         "student_name": student_name,
                         "student_id": student_id,
                         "distance": distance,
+                        "image_path": blob_name,
                     }
 
             except Exception as error:
@@ -1856,16 +2019,57 @@ def recognize_student():
                 traceback.print_exc()
                 continue
 
+        # -------------------------------------------------
+        # Sort students by their best appearance distance
+        # -------------------------------------------------
+        ranked_matches = sorted(
+            student_best_matches.values(),
+            key=lambda match: match["distance"],
+        )
+
+        if not ranked_matches:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "No valid stored face images "
+                        "could be compared"
+                    ),
+                }
+            ), 404
+
+        best_match = ranked_matches[0]
+        best_distance = best_match["distance"]
+
+        second_best_distance = None
+
+        if len(ranked_matches) > 1:
+            second_best_distance = (
+                ranked_matches[1]["distance"]
+            )
+
         print(
-            f"Best distance found: {best_distance}",
+            (
+                f"Best match: "
+                f"{best_match['student_id']}, "
+                f"distance={best_distance:.6f}"
+            ),
             flush=True,
         )
 
-        # Reject the photo if no valid face match was found
-        if (
-            best_match is None
-            or best_distance > match_threshold
-        ):
+        if second_best_distance is not None:
+            print(
+                (
+                    f"Second-best distance: "
+                    f"{second_best_distance:.6f}"
+                ),
+                flush=True,
+            )
+
+        # -------------------------------------------------
+        # Reject when the closest student is still too far
+        # -------------------------------------------------
+        if best_distance > match_threshold:
             return jsonify(
                 {
                     "success": False,
@@ -1873,18 +2077,64 @@ def recognize_student():
                         "No matching student found "
                         "in selected class"
                     ),
-                    "best_distance": (
-                        None
-                        if best_match is None
-                        else round(best_distance, 4)
+                    "best_distance": round(
+                        best_distance,
+                        4,
                     ),
+                    "threshold": match_threshold,
                 }
             ), 404
 
-        # Use the closest accepted student
-        student_name = best_match["student_name"]
-        student_id = best_match["student_id"]
+        # Optional ambiguity protection:
+        # Reject when two different students are nearly
+        # equally close.
+        minimum_distance_gap = 0.03
 
+        if (
+            second_best_distance is not None
+            and (
+                second_best_distance
+                - best_distance
+            ) < minimum_distance_gap
+        ):
+            print(
+                (
+                    "Recognition rejected because "
+                    "the two closest students were "
+                    "too similar"
+                ),
+                flush=True,
+            )
+
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Face match was uncertain. "
+                        "Please use a clearer photo"
+                    ),
+                    "best_distance": round(
+                        best_distance,
+                        4,
+                    ),
+                    "second_best_distance": round(
+                        second_best_distance,
+                        4,
+                    ),
+                }
+            ), 409
+
+        student_name = best_match[
+            "student_name"
+        ]
+
+        student_id = best_match[
+            "student_id"
+        ]
+
+        # -------------------------------------------------
+        # Mark attendance
+        # -------------------------------------------------
         current_time = datetime.now(
             timezone.utc
         )
@@ -1926,7 +2176,9 @@ def recognize_student():
                     {
                         "student_name": student_name,
                         "timestamp": current_time,
-                        "attendance_id": existing_record[0],
+                        "attendance_id": (
+                            existing_record[0]
+                        ),
                     },
                 )
 
@@ -1969,8 +2221,14 @@ def recognize_student():
                 "class_id": class_id,
                 "attendance_marked": True,
                 "status": "Present",
-                "distance": round(best_distance, 4),
-                "timestamp": current_time.isoformat(),
+                "distance": round(
+                    best_distance,
+                    4,
+                ),
+                "threshold": match_threshold,
+                "timestamp": (
+                    current_time.isoformat()
+                ),
             }
         ), 200
 
@@ -1988,7 +2246,6 @@ def recognize_student():
                 "error": "Face recognition failed",
             }
         ), 500
-
 # ---------------------------------------------------------
 # Attendance
 # ---------------------------------------------------------
