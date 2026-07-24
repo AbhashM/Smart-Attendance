@@ -2,13 +2,47 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Attendance History</title>
+
     <link rel="stylesheet" href="styles.css">
+
+    <style>
+        .attendance-photo {
+            width: 70px;
+            height: 55px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+        }
+
+        .photo-link {
+            display: inline-block;
+            text-decoration: none;
+        }
+
+        .distance-good {
+            font-weight: bold;
+        }
+
+        .no-photo {
+            color: #777;
+            font-size: 14px;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+        }
+    </style>
 </head>
+
 <body>
 
 <div class="navbar">
     <h1>Smart Attendance</h1>
+
     <div class="nav-links">
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
@@ -23,85 +57,201 @@
 </div>
 
 <div class="container">
+
     <div class="card">
         <h2>Attendance History</h2>
 
-        <label>Select Class:</label>
-        <select id="classSelect"></select>
+        <label for="classSelect">Select Class:</label>
+
+        <select id="classSelect">
+            <option value="">Loading classes...</option>
+        </select>
 
         <br><br>
 
-        <label>Select Date:</label>
-        <input type="date" id="attendanceDate">
+        <label for="attendanceDate">Select Date:</label>
 
-        <button onclick="loadAttendance()">Load Attendance</button>
-        <button onclick="exportAttendance()">Export to Excel</button>
+        <input
+            type="date"
+            id="attendanceDate"
+        >
 
-        <h3 id="count">Total Records: 0</h3>
-        <p id="message">Please select a class and date to view attendance records.</p>
+        <button
+            type="button"
+            onclick="loadAttendance()"
+        >
+            Load Attendance
+        </button>
+
+        <button
+            type="button"
+            onclick="exportAttendance()"
+        >
+            Export Attendance
+        </button>
+
+        <h3 id="count">
+            Total Records: 0
+        </h3>
+
+        <p id="message">
+            Please select a class and date to view attendance records.
+        </p>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Student ID</th>
-                <th>Student Name</th>
-                <th>Check-in Time</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody id="attendanceTable"></tbody>
-    </table>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Student ID</th>
+                    <th>Student Name</th>
+                    <th>Check-in Time</th>
+                    <th>Status</th>
+                    <th>Recognition Distance</th>
+                    <th>Attendance Photo</th>
+                </tr>
+            </thead>
+
+            <tbody id="attendanceTable"></tbody>
+        </table>
+    </div>
+
 </div>
 
 <script src="config.js"></script>
 
 <script>
     function formatTime(timestamp) {
+        if (!timestamp) {
+            return "N/A";
+        }
+
         const date = new Date(timestamp);
+
+        if (Number.isNaN(date.getTime())) {
+            return "N/A";
+        }
 
         return date.toLocaleTimeString([], {
             hour: "2-digit",
-            minute: "2-digit"
+            minute: "2-digit",
+            second: "2-digit"
         });
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+    }
+
+    function getPhotoUrl(photoPath) {
+        if (!photoPath) {
+            return null;
+        }
+
+        if (
+            photoPath.startsWith("http://") ||
+            photoPath.startsWith("https://")
+        ) {
+            return photoPath;
+        }
+
+        const baseUrl = API_BASE_URL.replace(/\/$/, "");
+        const path = photoPath.startsWith("/")
+            ? photoPath
+            : `/${photoPath}`;
+
+        return `${baseUrl}${path}`;
+    }
+
+    function formatDistance(distance) {
+        if (
+            distance === null ||
+            distance === undefined ||
+            distance === ""
+        ) {
+            return "N/A";
+        }
+
+        const numericDistance = Number(distance);
+
+        if (Number.isNaN(numericDistance)) {
+            return "N/A";
+        }
+
+        return numericDistance.toFixed(4);
+    }
+
     async function loadClasses() {
-        const select = document.getElementById("classSelect");
-        select.innerHTML = "";
+        const select =
+            document.getElementById("classSelect");
+
+        select.innerHTML =
+            '<option value="">Loading classes...</option>';
 
         try {
-            const response = await fetch(`${API_BASE_URL}/classes`);
+            const response = await fetch(
+                `${API_BASE_URL}/classes`
+            );
+
             const data = await response.json();
 
-            if (!data.success || data.classes.length === 0) {
-                select.innerHTML = '<option value="">No classes found</option>';
+            if (
+                !response.ok ||
+                !data.success ||
+                !Array.isArray(data.classes) ||
+                data.classes.length === 0
+            ) {
+                select.innerHTML =
+                    '<option value="">No classes found</option>';
+
                 return;
             }
 
+            select.innerHTML =
+                '<option value="">Select a class</option>';
+
             data.classes.forEach(cls => {
-                const option = document.createElement("option");
+                const option =
+                    document.createElement("option");
 
                 option.value = cls.id;
+
                 option.textContent =
-                    cls.course_code + " - " + cls.course_name;
+                    `${cls.course_code} - ${cls.course_name}`;
 
                 select.appendChild(option);
             });
 
         } catch (error) {
-            console.log(error);
-            select.innerHTML = '<option value="">Unable to load classes</option>';
+            console.error(
+                "Unable to load classes:",
+                error
+            );
+
+            select.innerHTML =
+                '<option value="">Unable to load classes</option>';
         }
     }
 
     async function loadAttendance() {
-        const table = document.getElementById("attendanceTable");
-        const count = document.getElementById("count");
-        const message = document.getElementById("message");
+        const table =
+            document.getElementById("attendanceTable");
+
+        const count =
+            document.getElementById("count");
+
+        const message =
+            document.getElementById("message");
+
         const selectedDate =
             document.getElementById("attendanceDate").value;
+
         const classId =
             document.getElementById("classSelect").value;
 
@@ -111,13 +261,17 @@
         if (!selectedDate || !classId) {
             message.innerText =
                 "Please select a class and date to view attendance records.";
+
             return;
         }
 
-        message.innerText = "Loading attendance records...";
+        message.innerText =
+            "Loading attendance records...";
 
         const url =
-            `${API_BASE_URL}/attendance?date=${selectedDate}&class_id=${classId}`;
+            `${API_BASE_URL}/attendance` +
+            `?date=${encodeURIComponent(selectedDate)}` +
+            `&class_id=${encodeURIComponent(classId)}`;
 
         try {
             const response = await fetch(url);
@@ -125,60 +279,147 @@
 
             if (!response.ok || !data.success) {
                 message.innerText =
-                    data.error || "Failed to load attendance records.";
+                    data.error ||
+                    "Failed to load attendance records.";
+
                 return;
             }
 
-            count.innerText =
-                "Total Records: " + data.attendance.length;
+            const records = Array.isArray(data.attendance)
+                ? data.attendance
+                : [];
 
-            if (data.attendance.length === 0) {
+            count.innerText =
+                `Total Records: ${records.length}`;
+
+            if (records.length === 0) {
                 message.innerText =
                     "No attendance records found for this class and date.";
+
                 return;
             }
 
             message.innerText =
-                "Showing attendance for selected class on " + selectedDate;
+                `Showing attendance for the selected class on ${selectedDate}.`;
 
-            data.attendance.forEach((record, index) => {
-                const row = document.createElement("tr");
+            records.forEach((record, index) => {
+                const row =
+                    document.createElement("tr");
+
+                const photoUrl = getPhotoUrl(
+                    record.attendance_photo_url
+                );
+
+                const hasPhoto =
+                    record.attendance_photo_available &&
+                    photoUrl;
+
+                const photoCell = hasPhoto
+                    ? `
+                        <a
+                            href="${escapeHtml(photoUrl)}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="photo-link"
+                            title="View full attendance photo"
+                        >
+                            <img
+                                src="${escapeHtml(photoUrl)}"
+                                alt="Attendance photo for ${escapeHtml(record.student_name)}"
+                                class="attendance-photo"
+                                loading="lazy"
+                            >
+                        </a>
+                    `
+                    : `
+                        <span class="no-photo">
+                            No photo
+                        </span>
+                    `;
 
                 row.innerHTML = `
                     <td>${index + 1}</td>
-                    <td>${record.student_id}</td>
-                    <td>${record.student_name}</td>
-                    <td>${formatTime(record.timestamp)}</td>
-                    <td>${record.status}</td>
+
+                    <td>
+                        ${escapeHtml(record.student_id)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(record.student_name)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(formatTime(record.timestamp))}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(record.status)}
+                    </td>
+
+                    <td class="distance-good">
+                        ${escapeHtml(
+                            formatDistance(
+                                record.recognition_distance
+                            )
+                        )}
+                    </td>
+
+                    <td>
+                        ${photoCell}
+                    </td>
                 `;
 
                 table.appendChild(row);
             });
 
         } catch (error) {
-            console.log(error);
-            message.innerText = "Request failed.";
+            console.error(
+                "Attendance request failed:",
+                error
+            );
+
+            message.innerText =
+                "Request failed. Please check the server and try again.";
         }
     }
 
     function exportAttendance() {
         const selectedDate =
             document.getElementById("attendanceDate").value;
+
         const classId =
             document.getElementById("classSelect").value;
 
         if (!selectedDate || !classId) {
-            alert("Please select a class and date before exporting.");
+            alert(
+                "Please select a class and date before exporting."
+            );
+
             return;
         }
 
         const url =
-            `${API_BASE_URL}/export-attendance?date=${selectedDate}&class_id=${classId}`;
+            `${API_BASE_URL}/export-attendance` +
+            `?date=${encodeURIComponent(selectedDate)}` +
+            `&class_id=${encodeURIComponent(classId)}`;
 
         window.location.href = url;
     }
 
-    window.onload = loadClasses;
+    async function initializePage() {
+        const dateInput =
+            document.getElementById("attendanceDate");
+
+        dateInput.value =
+            new Date().toISOString().split("T")[0];
+
+        await loadClasses();
+    }
+
+    window.addEventListener(
+        "DOMContentLoaded",
+        initializePage
+    );
 </script>
 
 </body>

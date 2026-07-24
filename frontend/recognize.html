@@ -4,11 +4,52 @@
     <meta charset="UTF-8">
     <title>Recognize Student</title>
     <link rel="stylesheet" href="styles.css">
+
+    <style>
+        .camera-section {
+            margin-top: 20px;
+        }
+
+        #camera,
+        #preview {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 10px;
+            background: #111;
+            display: block;
+            margin-top: 12px;
+        }
+
+        #preview {
+            display: none;
+        }
+
+        .camera-buttons {
+            margin-top: 15px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .secondary-button {
+            background: #6b7280;
+        }
+
+        .danger-button {
+            background: #dc2626;
+        }
+
+        .status-message {
+            margin-top: 15px;
+        }
+    </style>
 </head>
+
 <body>
 
 <div class="navbar">
     <h1>Smart Attendance</h1>
+
     <div class="nav-links">
         <a href="index.html">Home</a>
         <a href="register.html">Register</a>
@@ -26,126 +67,411 @@
     <div class="card">
         <h2>Recognize Student</h2>
 
-        <label>Select Class:</label>
+        <label for="classSelect">Select Class:</label>
         <br>
+
         <select id="classSelect"></select>
 
-        <br><br>
+        <div class="camera-section">
+            <h3>Live Camera</h3>
 
-        <input type="file" id="testImage" accept="image/*">
+            <video
+                id="camera"
+                autoplay
+                playsinline
+                muted>
+            </video>
 
-        <br><br>
+            <canvas
+                id="canvas"
+                style="display: none;">
+            </canvas>
 
-        <button id="recognizeBtn" type="button">
+            <img
+                id="preview"
+                alt="Captured attendance photo">
+
+            <div class="camera-buttons">
+                <button
+                    id="startCameraBtn"
+                    type="button">
+                    Start Camera
+                </button>
+
+                <button
+                    id="captureBtn"
+                    type="button"
+                    class="secondary-button"
+                    disabled>
+                    Capture Photo
+                </button>
+
+                <button
+                    id="retakeBtn"
+                    type="button"
+                    class="danger-button"
+                    disabled>
+                    Retake Photo
+                </button>
+            </div>
+        </div>
+
+        <br>
+
+        <button
+            id="recognizeBtn"
+            type="button"
+            disabled>
             Recognize & Mark Attendance
         </button>
 
-        <p id="result">Waiting for input...</p>
+        <p
+            id="result"
+            class="status-message">
+            Start the camera and capture a photo.
+        </p>
     </div>
 </div>
 
 <script src="config.js"></script>
 
 <script>
+    const classSelect =
+        document.getElementById("classSelect");
+
+    const camera =
+        document.getElementById("camera");
+
+    const canvas =
+        document.getElementById("canvas");
+
+    const preview =
+        document.getElementById("preview");
+
+    const startCameraButton =
+        document.getElementById("startCameraBtn");
+
+    const captureButton =
+        document.getElementById("captureBtn");
+
+    const retakeButton =
+        document.getElementById("retakeBtn");
+
+    const recognizeButton =
+        document.getElementById("recognizeBtn");
+
+    const resultText =
+        document.getElementById("result");
+
+    let cameraStream = null;
+    let capturedBlob = null;
+
     async function loadClasses() {
-        const select = document.getElementById("classSelect");
-        select.innerHTML = "";
+        classSelect.innerHTML = "";
 
         try {
-            const response = await fetch(`${API_BASE_URL}/classes`);
+            const response = await fetch(
+                `${API_BASE_URL}/classes`
+            );
+
             const data = await response.json();
 
-            if (!response.ok || !data.classes || data.classes.length === 0) {
-                select.innerHTML =
+            if (
+                !response.ok ||
+                !data.classes ||
+                data.classes.length === 0
+            ) {
+                classSelect.innerHTML =
                     '<option value="">No classes found</option>';
+
                 return;
             }
 
             data.classes.forEach(cls => {
-                const option = document.createElement("option");
+                const option =
+                    document.createElement("option");
 
                 option.value = cls.id;
-                option.textContent =
-                    cls.course_code + " - " + cls.course_name;
 
-                select.appendChild(option);
+                option.textContent =
+                    cls.course_code +
+                    " - " +
+                    cls.course_name;
+
+                classSelect.appendChild(option);
             });
 
         } catch (error) {
             console.log(error);
 
-            select.innerHTML =
+            classSelect.innerHTML =
                 '<option value="">Failed to load classes</option>';
         }
     }
 
-    document
-        .getElementById("recognizeBtn")
-        .addEventListener("click", async function () {
-            const classId =
-                document.getElementById("classSelect").value;
-            const fileInput =
-                document.getElementById("testImage");
-            const resultText =
-                document.getElementById("result");
-            const recognizeButton =
-                document.getElementById("recognizeBtn");
+    async function startCamera() {
+        resultText.textContent =
+            "Requesting camera access...";
 
-            if (!classId) {
-                resultText.textContent =
-                    "Please select a valid class.";
-                return;
+        try {
+            if (cameraStream) {
+                cameraStream
+                    .getTracks()
+                    .forEach(track => track.stop());
             }
 
-            if (!fileInput.files.length) {
-                resultText.textContent =
-                    "Please choose an image first.";
-                return;
-            }
+            cameraStream =
+                await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: "user",
+                        width: {
+                            ideal: 1280
+                        },
+                        height: {
+                            ideal: 720
+                        }
+                    },
+                    audio: false
+                });
 
-            resultText.textContent = "Recognizing student...";
+            camera.srcObject = cameraStream;
+
+            await camera.play();
+
+            camera.style.display = "block";
+            preview.style.display = "none";
+
+            capturedBlob = null;
+
+            captureButton.disabled = false;
+            retakeButton.disabled = true;
             recognizeButton.disabled = true;
 
-            const formData = new FormData();
-            formData.append("class_id", classId);
-            formData.append("image", fileInput.files[0]);
+            resultText.textContent =
+                "Camera ready. Position your face and capture a photo.";
 
-            try {
-                const response = await fetch(
-                    `${API_BASE_URL}/recognize`,
-                    {
-                        method: "POST",
-                        body: formData
-                    }
-                );
+        } catch (error) {
+            console.log(error);
 
-                const data = await response.json();
+            resultText.textContent =
+                "Camera access failed. Please allow camera permission.";
 
-                if (response.ok && data.success) {
+            captureButton.disabled = true;
+            recognizeButton.disabled = true;
+        }
+    }
+
+    function capturePhoto() {
+        if (
+            !cameraStream ||
+            camera.videoWidth === 0 ||
+            camera.videoHeight === 0
+        ) {
+            resultText.textContent =
+                "Camera is not ready yet.";
+
+            return;
+        }
+
+        canvas.width = camera.videoWidth;
+        canvas.height = camera.videoHeight;
+
+        const context =
+            canvas.getContext("2d");
+
+        context.drawImage(
+            camera,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        canvas.toBlob(
+            blob => {
+                if (!blob) {
                     resultText.textContent =
-                        "Attendance marked for " +
-                        data.student_name +
-                        " (" +
-                        data.student_id +
-                        ") as " +
-                        data.status +
-                        " at " +
-                        data.timestamp;
-                } else {
-                    resultText.textContent =
-                        "Error: " +
-                        (data.error || "Recognition failed.");
+                        "Could not capture photo.";
+
+                    return;
                 }
 
-            } catch (error) {
-                console.log(error);
-                resultText.textContent = "Request failed.";
-            } finally {
-                recognizeButton.disabled = false;
-            }
-        });
+                capturedBlob = blob;
 
-    window.onload = loadClasses;
+                preview.src =
+                    URL.createObjectURL(blob);
+
+                preview.style.display = "block";
+                camera.style.display = "none";
+
+                captureButton.disabled = true;
+                retakeButton.disabled = false;
+                recognizeButton.disabled = false;
+
+                resultText.textContent =
+                    "Photo captured. Review it, then mark attendance.";
+            },
+            "image/jpeg",
+            0.92
+        );
+    }
+
+    function retakePhoto() {
+        capturedBlob = null;
+
+        preview.src = "";
+        preview.style.display = "none";
+        camera.style.display = "block";
+
+        captureButton.disabled = false;
+        retakeButton.disabled = true;
+        recognizeButton.disabled = true;
+
+        resultText.textContent =
+            "Position your face and capture another photo.";
+    }
+
+    async function recognizeStudent() {
+        const classId = classSelect.value;
+
+        if (!classId) {
+            resultText.textContent =
+                "Please select a valid class.";
+
+            return;
+        }
+
+        if (!capturedBlob) {
+            resultText.textContent =
+                "Please capture a live photo first.";
+
+            return;
+        }
+
+        recognizeButton.disabled = true;
+        startCameraButton.disabled = true;
+        captureButton.disabled = true;
+        retakeButton.disabled = true;
+
+        resultText.textContent =
+            "Recognizing student...";
+
+        const formData = new FormData();
+
+        formData.append(
+            "class_id",
+            classId
+        );
+
+        formData.append(
+            "image",
+            capturedBlob,
+            `attendance-${Date.now()}.jpg`
+        );
+
+        try {
+            const response = await fetch(
+                `${API_BASE_URL}/recognize`,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+            let data;
+
+            try {
+                data = await response.json();
+
+            } catch (jsonError) {
+                throw new Error(
+                    "Server returned an invalid response."
+                );
+            }
+
+            if (response.ok && data.success) {
+                resultText.textContent =
+                    "Attendance marked for " +
+                    data.student_name +
+                    " (" +
+                    data.student_id +
+                    ") as " +
+                    data.status +
+                    " at " +
+                    data.timestamp;
+
+                recognizeButton.disabled = true;
+                retakeButton.disabled = false;
+
+            } else {
+                resultText.textContent =
+                    "Error: " +
+                    (
+                        data.error ||
+                        "Recognition failed."
+                    );
+
+                recognizeButton.disabled = false;
+                retakeButton.disabled = false;
+            }
+
+        } catch (error) {
+            console.log(error);
+
+            resultText.textContent =
+                "Request failed: " +
+                error.message;
+
+            recognizeButton.disabled = false;
+            retakeButton.disabled = false;
+
+        } finally {
+            startCameraButton.disabled = false;
+        }
+    }
+
+    function stopCamera() {
+        if (cameraStream) {
+            cameraStream
+                .getTracks()
+                .forEach(track => track.stop());
+
+            cameraStream = null;
+        }
+    }
+
+    startCameraButton.addEventListener(
+        "click",
+        startCamera
+    );
+
+    captureButton.addEventListener(
+        "click",
+        capturePhoto
+    );
+
+    retakeButton.addEventListener(
+        "click",
+        retakePhoto
+    );
+
+    recognizeButton.addEventListener(
+        "click",
+        recognizeStudent
+    );
+
+    window.addEventListener(
+        "beforeunload",
+        stopCamera
+    );
+
+    window.addEventListener(
+        "load",
+        async () => {
+            await loadClasses();
+            await startCamera();
+        }
+    );
 </script>
 
 </body>
