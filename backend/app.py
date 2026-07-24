@@ -24,7 +24,6 @@ import traceback
 import uuid
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 from azure.core.exceptions import (
@@ -182,6 +181,10 @@ engine = create_engine(
     pool_pre_ping=True,
 
     pool_recycle=300,
+
+    connect_args={
+        "connect_timeout": 10,
+    },
 )
 
 
@@ -592,41 +595,72 @@ excuses_table = Table(
 )
 
 
-metadata.create_all(
-    engine
-)
-
-
 # ---------------------------------------------------------
-# Safe schema migration
+# Schema creation / safe migration
+#
+# Wrapped in a function (instead of running loose at
+# module level) and guarded with a timeout + try/except so
+# a slow or unreachable database cannot hang app startup
+# indefinitely. If this fails, the app still boots and
+# serves /health so the failure is visible instead of the
+# whole process hanging silently.
 # ---------------------------------------------------------
-with engine.begin() as connection:
-    connection.execute(
-        text(
-            """
-            ALTER TABLE attendance
-            ADD COLUMN IF NOT EXISTS
-                attendance_photo_path TEXT
-            """
+def run_schema_setup():
+    try:
+        metadata.create_all(
+            engine
         )
-    )
 
-    connection.execute(
-        text(
-            """
-            ALTER TABLE attendance
-            ADD COLUMN IF NOT EXISTS
-                recognition_distance
-                DOUBLE PRECISION
-            """
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    ALTER TABLE attendance
+                    ADD COLUMN IF NOT EXISTS
+                        attendance_photo_path TEXT
+                    """
+                )
+            )
+
+            connection.execute(
+                text(
+                    """
+                    ALTER TABLE attendance
+                    ADD COLUMN IF NOT EXISTS
+                        recognition_distance
+                        DOUBLE PRECISION
+                    """
+                )
+            )
+
+        print(
+            "Schema setup completed successfully.",
+            flush=True,
         )
-    )
+
+        return True
+
+    except SQLAlchemyError as error:
+        print(
+            (
+                "Schema setup failed "
+                f"(app will still boot): {repr(error)}"
+            ),
+            flush=True,
+        )
+
+        return False
+
+
+run_schema_setup()
 
 
 # ---------------------------------------------------------
 # Lazy-loaded AI models
 # ---------------------------------------------------------
 _deepface = None
+
+_mediapipe = None
 
 _ai_lock = threading.Lock()
 
@@ -644,6 +678,19 @@ def get_deepface():
                 _deepface = DeepFace
 
     return _deepface
+
+
+def get_mediapipe():
+    global _mediapipe
+
+    if _mediapipe is None:
+        with _ai_lock:
+            if _mediapipe is None:
+                import mediapipe as mp
+
+                _mediapipe = mp
+
+    return _mediapipe
 
 
 # ---------------------------------------------------------
@@ -913,6 +960,8 @@ def extract_face_with_mediapipe(
         image,
         cv2.COLOR_BGR2RGB,
     )
+
+    mp = get_mediapipe()
 
     with (
         mp.solutions
