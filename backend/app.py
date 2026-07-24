@@ -17,6 +17,7 @@ import csv
 import cv2
 import numpy as np
 import mediapipe as mp
+import google.protobuf
 import traceback
 import io
 import os
@@ -72,7 +73,15 @@ FRONTEND_DIR = os.path.join(
     "frontend",
 )
 
+print(
+    f"Runtime MediaPipe version: {mp.__version__}",
+    flush=True,
+)
 
+print(
+    f"Runtime protobuf version: {google.protobuf.__version__}",
+    flush=True,
+)
 # ---------------------------------------------------------
 # PostgreSQL configuration
 # ---------------------------------------------------------
